@@ -7,6 +7,26 @@
 import * as perlinFns from './perlin.js'
 import * as pixel from './currentPixel.js'
 
+const FRACTIONAL_INDEX = /^-?\d+\.\d+$/
+function coerceIndex(prop) {
+  if (typeof prop !== 'string') return prop
+  if (prop === 'true') return '1'
+  if (prop === 'false') return '0'
+  if (FRACTIONAL_INDEX.test(prop)) return String(Math.trunc(Number(prop)))
+  return prop
+}
+const pbArrayHandler = {
+  get(target, prop, receiver) {
+    return Reflect.get(target, coerceIndex(prop), receiver)
+  },
+  set(target, prop, value, receiver) {
+    return Reflect.set(target, coerceIndex(prop), value, receiver)
+  }
+}
+function makePbArray(n) {
+  return new Proxy(new Array(n).fill(0), pbArrayHandler)
+}
+
 // A VM instance's time origin and deterministic PRNG state.
 // `createBuiltins(ctx)` returns a fresh environment tied to the given ctx object
 // (so beforeRender timers and PRNG are per-pattern-load).
@@ -115,7 +135,12 @@ export function createBuiltins(ctx) {
   env.paint = pixel.paint
 
   // -------- Arrays --------
-  env.array = (n) => new Float64Array(n)  // PB arrays are numeric; typed is faster
+  // Pixelblaze arrays are dynamic, nestable, and implicitly truncate fractional
+  // indices (hardware arithmetic is 16.16 fixed-point). JS does neither out of
+  // the box: typed arrays coerce stored subarrays to NaN, and `arr[10.14]`
+  // evaluates to undefined. Wrap a plain Array in a Proxy that floors
+  // numeric-looking index strings on both get and set.
+  env.array = (n) => makePbArray(n | 0)
   // Note: patterns may use both method-form (a.length, a.forEach) and functional form.
   // The method form works natively on Array and (for some methods) Float64Array.
   // Provide the functional aliases.
@@ -183,6 +208,12 @@ export function createBuiltins(ctx) {
   env.digitalWrite = () => {}
   env.pinMode = () => {}
   env.touchRead = () => 0
+  env.INPUT = 0
+  env.OUTPUT = 1
+  env.INPUT_PULLUP = 2
+  env.INPUT_PULLDOWN = 3
+  env.HIGH = 1
+  env.LOW = 0
 
   // -------- Sequencer / misc --------
   env.sequencerNext = () => {}

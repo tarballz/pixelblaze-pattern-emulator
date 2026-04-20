@@ -34,7 +34,7 @@ export function createScene(canvas) {
   renderer.toneMapping = THREE.NoToneMapping
 
   const scene = new THREE.Scene()
-  scene.background = new THREE.Color(0x07080c)
+  scene.background = new THREE.Color(0x1a1c22)
 
   const camera = new THREE.PerspectiveCamera(60, canvas.clientWidth / canvas.clientHeight, 0.01, 10000)
   camera.position.set(2, 2, 2)

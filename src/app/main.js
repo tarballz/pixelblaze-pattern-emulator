@@ -12,7 +12,6 @@ import { createBrowser } from './browser.js'
 
 // ---------- DOM refs ----------
 const canvas = document.getElementById('stage')
-const fpsEl = document.getElementById('fps')
 const countsEl = document.getElementById('counts')
 const playPauseBtn = document.getElementById('playpause')
 const toggleLoaderBtn = document.getElementById('toggleLoader')
@@ -47,11 +46,11 @@ let state = {
     autoReload: true
   },
   running: true,
+  needsFit: true,
   vm: null,
   pixelCloud: null,
   chosenRender: null,
   rgb: null,              // Float32Array pixelCount*3
-  frameTimes: []
 }
 
 const RECENTS_KEY = 'pb_emu.recents.v1'
@@ -518,6 +517,13 @@ function showLintFindings(findings) {
   if (!el) return
   el.replaceChildren()
   if (!findings.length) { el.classList.add('hidden'); return }
+  const close = document.createElement('button')
+  close.type = 'button'
+  close.className = 'warn-close'
+  close.textContent = '×'
+  close.title = 'Dismiss'
+  close.addEventListener('click', () => el.classList.add('hidden'))
+  el.appendChild(close)
   for (const f of findings) {
     const row = document.createElement('div')
     row.className = `warn-${f.severity}`
@@ -542,6 +548,7 @@ function loadMap(text, descriptor) {
 function applyMapParsed(parsed, descriptor) {
   showError(null)
   state.mapParsed = parsed
+  state.needsFit = true
   if (descriptor) {
     state.lastMap = descriptor
     pushRecent('map', descriptor)
@@ -578,9 +585,11 @@ function rebuild() {
   if (state.pixelCloud) state.pixelCloud.dispose()
   state.pixelCloud = createPixelCloud(sceneCtx.scene, { coords, pixelCount })
 
-  // Auto-fit the camera to the cloud. Positions are in [-1, 1]^3 (pixels.js
-  // re-centers), so the fit is symmetric about the origin.
-  sceneCtx.fitTo([0, 0, 0], Math.sqrt(3))
+  // Auto-fit only when the map changes — pattern-only reloads keep the camera.
+  if (state.needsFit) {
+    sceneCtx.fitTo([0, 0, 0], Math.sqrt(3))
+    state.needsFit = false
+  }
 
   // Build VM
   state.vm = createVM({ source: state.patternSource, pixelCount, mapDim: dim })
@@ -597,6 +606,11 @@ function rebuild() {
 
   countsEl.textContent = `${pixelCount} LEDs · ${dim}D (${prepared.source ?? 'map'}) · ${info.picked}`
   showError(null)
+
+  // A previous pattern may have errored out and forced state.running=false.
+  // A fresh VM earns a fresh chance — re-arm the render loop.
+  state.running = true
+  playPauseBtn.textContent = 'Pause'
 }
 
 // ---------- Render loop ----------
@@ -633,16 +647,6 @@ function frame() {
 
   if (state.running) runOnePatternFrame(realDelta)
   paletteStrip.draw()
-
-  // FPS: EMA of last second of frame times
-  const now = performance.now()
-  state.frameTimes.push(now)
-  while (state.frameTimes.length && now - state.frameTimes[0] > 1000) state.frameTimes.shift()
-  if (state.frameTimes.length > 1) {
-    const fps = (state.frameTimes.length - 1) / ((state.frameTimes[state.frameTimes.length - 1] - state.frameTimes[0]) / 1000)
-    fpsEl.textContent = `${fps.toFixed(0)} fps`
-  }
-
   sceneCtx.render()
 }
 requestAnimationFrame(frame)

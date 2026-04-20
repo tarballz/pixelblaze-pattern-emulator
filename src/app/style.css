@@ -115,6 +115,12 @@ html, body { margin: 0; padding: 0; height: 100%; background: #000; color: #ddd;
   background: rgba(25, 22, 10, 0.9); border: 1px solid #665528;
   font: 12px/1.5 ui-monospace, Menlo, monospace;
 }
+#warnings .warn-close {
+  position: absolute; top: 2px; right: 4px;
+  background: transparent; border: none; color: #aaa; cursor: pointer;
+  font: 16px/1 system-ui, sans-serif; padding: 2px 6px; border-radius: 3px;
+}
+#warnings .warn-close:hover { background: #3a3422; color: #fff; }
 #warnings.hidden { display: none; }
 #warnings .warn-error { color: #ffa357; }
 #warnings .warn-warn  { color: #e6d16a; }

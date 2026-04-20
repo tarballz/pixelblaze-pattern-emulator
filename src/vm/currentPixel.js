@@ -13,9 +13,13 @@ export function resetPixel() {
 }
 
 export function readPixel(out, i) {
-  out[i * 3 + 0] = state.r < 0 ? 0 : state.r > 1 ? 1 : state.r
-  out[i * 3 + 1] = state.g < 0 ? 0 : state.g > 1 ? 1 : state.g
-  out[i * 3 + 2] = state.b < 0 ? 0 : state.b > 1 ? 1 : state.b
+  // NaN-check via self-compare: patterns that divide by zero produce Infinity
+  // that propagates to NaN through sin/cos. NaN < 0 and NaN > 1 are both false,
+  // so the plain clamp would leak NaN into the renderer. Coerce to 0 instead.
+  const r = state.r, g = state.g, b = state.b
+  out[i * 3 + 0] = r !== r || r < 0 ? 0 : r > 1 ? 1 : r
+  out[i * 3 + 1] = g !== g || g < 0 ? 0 : g > 1 ? 1 : g
+  out[i * 3 + 2] = b !== b || b < 0 ? 0 : b > 1 ? 1 : b
 }
 
 function frac(x) { return x - Math.floor(x) }

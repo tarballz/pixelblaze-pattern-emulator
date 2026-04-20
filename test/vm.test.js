@@ -89,6 +89,107 @@ describe('sandbox: loadPattern + classifyExports', () => {
     const exports = loadPattern(src, env)
     expect(typeof exports.render2D).toBe('function')
   })
+
+  it('bare `var x;` is initialized to 0 (PB zero-init semantic)', () => {
+    const src = `
+      var b
+      export function render3D(i, x, y, z) {
+        b += 0.5
+        rgb(b, b, b)
+      }
+    `
+    const env = mkEnv()
+    const exports = loadPattern(src, env)
+    const rgb = renderOne(exports, 0, 0, 0, 0)
+    // b starts at 0, b += 0.5 → 0.5, not NaN
+    expect(rgb[0]).toBeCloseTo(0.5, 3)
+  })
+
+  it('multi-name `var a, b = 1, c;` initializes bare idents to 0', () => {
+    const src = `
+      var a, b = 0.3, c
+      export function render3D(i, x, y, z) {
+        rgb(a + b, b, c + b)
+      }
+    `
+    const env = mkEnv()
+    const exports = loadPattern(src, env)
+    const rgb = renderOne(exports, 0, 0, 0, 0)
+    expect(rgb[0]).toBeCloseTo(0.3, 3)
+    expect(rgb[1]).toBeCloseTo(0.3, 3)
+    expect(rgb[2]).toBeCloseTo(0.3, 3)
+  })
+
+  it('undeclared identifiers (implicit globals) default to 0 on read', () => {
+    const src = `
+      export function beforeRender(delta) {
+        timebase = timebase + 1
+      }
+      export function render3D(i, x, y, z) {
+        rgb(timebase * 0.1, 0, 0)
+      }
+    `
+    const env = mkEnv()
+    const exports = loadPattern(src, env)
+    exports.beforeRender(16)
+    exports.beforeRender(16)
+    const rgb = renderOne(exports, 0, 0, 0, 0)
+    // timebase read as 0 on first iteration → 1, then 2
+    expect(rgb[0]).toBeCloseTo(0.2, 3)
+  })
+
+  it('array proxy treats boolean index true/false as 1/0', () => {
+    const src = `
+      var fns = array(2)
+      fns[0] = (v) => v * 0.2
+      fns[1] = (v) => v * 0.8
+      var pick = (1 >= 0.5)
+      export function render3D(i, x, y, z) {
+        rgb(fns[pick](1), 0, 0)
+      }
+    `
+    const env = mkEnv()
+    const exports = loadPattern(src, env)
+    const rgb = renderOne(exports, 0, 0, 0, 0)
+    expect(rgb[0]).toBeCloseTo(0.8, 3)
+  })
+
+  it('NaN output is coerced to 0 in readPixel', () => {
+    const src = `
+      export function render3D(i, x, y, z) {
+        rgb(0 / 0, 1 / 0, 0)
+      }
+    `
+    const env = mkEnv()
+    const exports = loadPattern(src, env)
+    const rgb = renderOne(exports, 0, 0, 0, 0)
+    expect(rgb[0]).toBe(0)
+    expect(rgb[1]).toBe(1) // Infinity clamps to 1
+    expect(rgb[2]).toBe(0)
+  })
+
+  it('export keyword strip preserves line boundaries', () => {
+    // Regression: regex used to swallow the newline before `export`, splicing
+    // a preceding line comment into the next line.
+    const src = `
+      //scale(1, 1);
+
+      export function render3D(i, x, y, z) { hsv(0.333, 1, 1) }
+    `
+    const env = mkEnv()
+    const exports = loadPattern(src, env)
+    expect(typeof exports.render3D).toBe('function')
+    const rgb = renderOne(exports, 0, 0, 0, 0)
+    expect(rgb[1]).toBeGreaterThan(0.9)
+  })
+
+  it('GPIO constants (OUTPUT, INPUT, HIGH, LOW) are defined', () => {
+    const env = mkEnv()
+    expect(env.OUTPUT).toBe(1)
+    expect(env.INPUT).toBe(0)
+    expect(env.HIGH).toBe(1)
+    expect(env.LOW).toBe(0)
+  })
 })
 
 describe('builtins: math/waveforms/perlin', () => {

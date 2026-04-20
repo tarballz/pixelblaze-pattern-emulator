@@ -48,10 +48,25 @@ function prepareSource(source) {
   let m
   while ((m = fnDecl.exec(source)) !== null) names.add(m[2])
 
-  // 2. Strip `export` keyword while keeping the declaration otherwise intact.
-  const stripped = source.replace(/(^|\n|;)\s*export\s+/g, '$1')
+  // 2. Strip `export` keyword while preserving surrounding whitespace.
+  // The earlier version (`\s*export\s+` → `$1`) swallowed newlines between
+  // a preceding line-comment and `export function ...`, splicing the two
+  // lines together so the comment ate the next declaration.
+  let stripped = source.replace(/(^|\n|;)(\s*)export(\s+)/g, '$1$2$3')
 
-  // 3. Build a return object of all collected function names, guarded with typeof.
+  // 3. Initialize bare `var x;` / `var a, b, c;` declarations to 0.
+  // PB firmware zero-initializes all fixed-point cells; JS leaves uninit vars
+  // as `undefined`, which poisons arithmetic into NaN on first use.
+  stripped = initBareVars(stripped)
+
+  // 4. Pre-declare identifiers assigned without `var`/`let`/`const` so reads
+  // before first write return 0.
+  const implicitGlobals = findImplicitGlobals(stripped, names)
+  const preamble = implicitGlobals.length
+    ? `var ${implicitGlobals.map(n => `${n} = 0`).join(', ')};`
+    : ''
+
+  // 4. Build a return object of all collected function names, guarded with typeof.
   const entries = Array.from(names)
     .map(n => `${JSON.stringify(n)}: typeof ${n} !== 'undefined' ? ${n} : undefined`)
     .join(', ')
@@ -61,8 +76,181 @@ function prepareSource(source) {
   // would reject idiomatic patterns like axial_flow.js. A Function body without
   // a "use strict" directive uses non-strict mode even when the enclosing
   // module is strict.
-  return `${stripped}\n;return { ${entries} };`
+  return `${preamble}\n${stripped}\n;return { ${entries} };`
 }
+
+// Identifiers assigned via `name = ...` but never declared with
+// var/let/const/function/function-parameter. These are treated as implicit
+// globals on Pixelblaze hardware, pre-initialized to 0.
+//
+// Regex-based: acceptable here because the pattern surface is well-behaved
+// JS. Skips property writes (`obj.x = ...` and `obj[x] = ...`), typed
+// comparisons (`x === y`, `x == y`), and the LHS of for/while conditions.
+function findImplicitGlobals(source, functionNames) {
+  // Strip comments and string contents before scanning — otherwise we'd
+  // pick up assignments from inside a `// foo = 1` comment or a string.
+  source = stripCommentsAndStrings(source)
+  const declared = new Set(functionNames)
+  for (const [, name] of source.matchAll(/\b(?:var|let|const)\s+([A-Za-z_$][\w$]*)/g)) declared.add(name)
+  // Catch multi-name var lists: `var a, b, c = 1` → capture b, c too.
+  for (const m of source.matchAll(/\b(?:var|let|const)\s+([^;\n=]+?)(?==|;|\n|$)/g)) {
+    for (const chunk of m[1].split(',')) {
+      const n = chunk.trim().split(/\s/)[0]
+      if (/^[A-Za-z_$][\w$]*$/.test(n)) declared.add(n)
+    }
+  }
+  // Function parameters — `function foo(a, b, c)` and anonymous `function(a, b)`.
+  for (const m of source.matchAll(/\bfunction\b[^(]*\(([^)]*)\)/g)) {
+    for (const p of m[1].split(',')) {
+      const n = p.trim().split(/\s*=\s*/)[0]
+      if (/^[A-Za-z_$][\w$]*$/.test(n)) declared.add(n)
+    }
+  }
+  // Arrow-function parameters — `(a, b) =>` and `a =>`.
+  for (const m of source.matchAll(/\(([^()]*)\)\s*=>/g)) {
+    for (const p of m[1].split(',')) {
+      const n = p.trim().split(/\s*=\s*/)[0]
+      if (/^[A-Za-z_$][\w$]*$/.test(n)) declared.add(n)
+    }
+  }
+  for (const m of source.matchAll(/(?:^|[^.\w$])([A-Za-z_$][\w$]*)\s*=>/g)) {
+    declared.add(m[1])
+  }
+
+  const assigned = new Set()
+  // Match `name = ` where `name` is not preceded by `.` or `[` and the `=` is
+  // not part of `==`/`===`/`!=`/`<=`/`>=`.
+  const re = /(^|[^.\w$\]])([A-Za-z_$][\w$]*)\s*=(?![=>])/g
+  let m
+  while ((m = re.exec(source)) !== null) {
+    assigned.add(m[2])
+  }
+
+  const out = []
+  for (const n of assigned) {
+    if (declared.has(n)) continue
+    // Skip JS reserved words / globals we'd never want to shadow.
+    if (RESERVED.has(n)) continue
+    out.push(n)
+  }
+  return out
+}
+
+// Walk `var` / `let` declarations and append ` = 0` to any bare identifier
+// (`var a, b = 1, c` → `var a = 0, b = 1, c = 0`). Operates on the source
+// directly, splicing insertions in reverse order. Uses a comment/string-
+// stripped mirror to locate positions without false-positives from
+// `//var x` comments or `"var x"` strings.
+function initBareVars(source) {
+  const cleaned = stripCommentsAndStrings(source)
+  const insertions = []
+  const kwRe = /\b(var|let)\s+/g
+  let m
+  while ((m = kwRe.exec(cleaned)) !== null) {
+    const listStart = m.index + m[0].length
+    // Find end of declaration (semicolon or newline) at bracket depth 0.
+    let end = listStart
+    let depth = 0
+    while (end < cleaned.length) {
+      const c = cleaned[end]
+      if (c === '(' || c === '[' || c === '{') depth++
+      else if (c === ')' || c === ']' || c === '}') { if (depth === 0) break; depth-- }
+      else if (depth === 0 && (c === ';' || c === '\n')) break
+      end++
+    }
+    // Split declaration list by comma at bracket depth 0.
+    const items = []
+    let start = listStart
+    let d = 0
+    for (let k = listStart; k <= end; k++) {
+      const c = cleaned[k]
+      if (c === '(' || c === '[' || c === '{') d++
+      else if (c === ')' || c === ']' || c === '}') d--
+      else if (d === 0 && (c === ',' || k === end)) {
+        items.push({ start, end: k })
+        start = k + 1
+      }
+    }
+    for (const item of items) {
+      const text = cleaned.slice(item.start, item.end)
+      // Has top-level `=` that isn't part of `==`/`===`/`!=`/`<=`/`>=`?
+      let hasEq = false
+      d = 0
+      for (let k = 0; k < text.length; k++) {
+        const c = text[k]
+        if (c === '(' || c === '[' || c === '{') d++
+        else if (c === ')' || c === ']' || c === '}') d--
+        else if (d === 0 && c === '=') {
+          const next = text[k + 1]
+          const prev = text[k - 1]
+          if (next !== '=' && prev !== '!' && prev !== '<' && prev !== '>' && prev !== '=') {
+            hasEq = true
+            break
+          }
+        }
+      }
+      if (hasEq) continue
+      if (!/^[A-Za-z_$][\w$]*$/.test(text.trim())) continue
+      insertions.push({ pos: item.end, text: ' = 0' })
+    }
+    kwRe.lastIndex = end
+  }
+  if (!insertions.length) return source
+  insertions.sort((a, b) => b.pos - a.pos)
+  let out = source
+  for (const ins of insertions) {
+    out = out.slice(0, ins.pos) + ins.text + out.slice(ins.pos)
+  }
+  return out
+}
+
+// Replace comment and string bodies with spaces (preserving structure) so a
+// subsequent regex scan can't match code-looking content inside them. Not a
+// full tokenizer — handles /* */, //, '…', "…", `…` well enough for PB patterns.
+function stripCommentsAndStrings(src) {
+  let out = ''
+  let i = 0
+  const n = src.length
+  while (i < n) {
+    const c = src[i]
+    const c2 = src[i + 1]
+    if (c === '/' && c2 === '/') {
+      out += '  '
+      i += 2
+      while (i < n && src[i] !== '\n') { out += ' '; i++ }
+    } else if (c === '/' && c2 === '*') {
+      out += '  '
+      i += 2
+      while (i < n && !(src[i] === '*' && src[i + 1] === '/')) {
+        out += src[i] === '\n' ? '\n' : ' '
+        i++
+      }
+      if (i < n) { out += '  '; i += 2 }
+    } else if (c === '"' || c === "'" || c === '`') {
+      const quote = c
+      out += ' '
+      i++
+      while (i < n && src[i] !== quote) {
+        if (src[i] === '\\' && i + 1 < n) { out += '  '; i += 2; continue }
+        out += src[i] === '\n' ? '\n' : ' '
+        i++
+      }
+      if (i < n) { out += ' '; i++ }
+    } else {
+      out += c
+      i++
+    }
+  }
+  return out
+}
+
+const RESERVED = new Set([
+  'break', 'case', 'catch', 'class', 'const', 'continue', 'debugger',
+  'default', 'delete', 'do', 'else', 'export', 'extends', 'false', 'finally',
+  'for', 'function', 'if', 'import', 'in', 'instanceof', 'let', 'new', 'null',
+  'return', 'super', 'switch', 'this', 'throw', 'true', 'try', 'typeof',
+  'undefined', 'var', 'void', 'while', 'with', 'yield', 'of'
+])
 
 export function classifyExports(exports) {
   const result = {
