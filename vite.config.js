@@ -4,6 +4,7 @@ import path from 'node:path'
 
 const LIST_ROUTE = '/__pb_emu__/list'
 const FILE_ROUTE = '/__pb_emu__/external'
+const WRITE_ROUTE = '/__pb_emu__/write'
 
 function pbEmuBrowser({ patternsDir, mapsDir }) {
   return {
@@ -67,6 +68,40 @@ function pbEmuBrowser({ patternsDir, mapsDir }) {
         }
       })
 
+      // POST write endpoint — overwrite an existing file under the configured
+      // external root. Declines writes to `samples` (shipped-with-repo) and to
+      // paths that don't already exist (avoids stray file creation from typos).
+      server.middlewares.use(WRITE_ROUTE, async (req, res) => {
+        if (req.method !== 'POST') return error(res, 405, 'POST only')
+        try {
+          const body = await readBody(req)
+          let parsed
+          try { parsed = JSON.parse(body) } catch { return error(res, 400, 'invalid JSON') }
+          const { kind, root: rootName, path: rel, content } = parsed || {}
+          if (!kind || !rootName || typeof rel !== 'string' || typeof content !== 'string') {
+            return error(res, 400, 'missing kind/root/path/content')
+          }
+          if (rootName !== 'external') return error(res, 403, `writes forbidden to root '${rootName}'`)
+          const kindRoots = roots[kind]
+          if (!kindRoots) return error(res, 400, `unknown kind: ${kind}`)
+          const root = kindRoots[rootName]
+          if (!root) return error(res, 404, `root '${rootName}' not configured`)
+          const target = safeJoin(root, rel)
+          if (!target) return error(res, 400, 'bad path')
+          // Overwrite only — don't surprise the user by creating new files here.
+          try {
+            const st = await fs.stat(target)
+            if (!st.isFile()) return error(res, 400, 'target is not a file')
+          } catch {
+            return error(res, 404, 'file does not exist (writes are overwrite-only)')
+          }
+          await fs.writeFile(target, content, 'utf8')
+          json(res, { ok: true, bytes: Buffer.byteLength(content, 'utf8') })
+        } catch (err) {
+          error(res, 500, String(err?.message || err))
+        }
+      })
+
       // Files are served under /__pb_emu__/external/<kind>/<path>. The client
       // encodes the kind into the URL so this middleware stays stateless.
       server.middlewares.use(FILE_ROUTE, async (req, res) => {
@@ -100,6 +135,14 @@ function error(res, code, msg) {
   res.statusCode = code
   res.setHeader('Content-Type', 'text/plain')
   res.end(msg)
+}
+function readBody(req) {
+  return new Promise((resolve, reject) => {
+    const chunks = []
+    req.on('data', (c) => chunks.push(c))
+    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')))
+    req.on('error', reject)
+  })
 }
 function contentTypeFor(p) {
   const ext = path.extname(p).toLowerCase()

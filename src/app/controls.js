@@ -7,6 +7,12 @@
 
 const STORE_KEY = 'pb_emu.controls.v1'
 
+// Tracks the live value of every widget in a container so the host can
+// hand them back as `previousValues` on the next editor-driven rebuild.
+// The hash-keyed localStorage below is per-source; this one is per-container
+// so in-editor typing doesn't snap knobs back to 0.5 on every reload.
+const liveValues = new WeakMap()
+
 // 32-bit FNV-1a — good enough to key localStorage entries.
 export function hashSource(s) {
   let h = 0x811c9dc5
@@ -26,9 +32,13 @@ function saveStore(store) {
 
 // Build a panel inside `container` for every control in `controls` (from
 // classifyExports). `source` is used to derive a persistence key.
+// If `previousValues` is provided, it takes precedence over the hash-keyed
+// store — used for editor-driven rebuilds so sliders stay put across edits.
 // Returns a disposer that clears the panel.
-export function buildControlPanel(container, controls, source) {
+export function buildControlPanel(container, controls, source, previousValues = null) {
   container.replaceChildren()
+  const live = {}
+  liveValues.set(container, live)
   if (!controls.length) { container.classList.add('hidden'); return () => {} }
   container.classList.remove('hidden')
 
@@ -51,13 +61,39 @@ export function buildControlPanel(container, controls, source) {
     label.textContent = humanize(c.label || c.name)
     row.appendChild(label)
 
-    const initial = saved[c.name]
-    const widget = makeWidget(c, initial, (value) => persist(c.name, value))
+    const prev = previousValues && Object.prototype.hasOwnProperty.call(previousValues, c.name)
+      ? previousValues[c.name]
+      : undefined
+    const initial = prev !== undefined ? prev : saved[c.name]
+    const widget = makeWidget(c, initial, (value) => {
+      live[c.name] = value
+      persist(c.name, value)
+    })
     row.appendChild(widget)
     container.appendChild(row)
+    // Seed live with whatever the widget adopted (either `initial` or its default).
+    live[c.name] = initial !== undefined ? initial : defaultFor(c)
   }
 
-  return () => container.replaceChildren()
+  return () => { container.replaceChildren(); liveValues.delete(container) }
+}
+
+// Read the current {name: value} map from widgets built by buildControlPanel.
+// Returns an empty object if the container was never populated.
+export function readCurrentValues(container) {
+  const live = liveValues.get(container)
+  return live ? { ...live } : {}
+}
+
+function defaultFor(c) {
+  switch (c.kind) {
+    case 'slider': return 0.5
+    case 'toggle': return false
+    case 'hsvPicker': return [0, 1, 1]
+    case 'rgbPicker': return [1, 1, 1]
+    case 'inputNumber': return 0
+    default: return undefined
+  }
 }
 
 function humanize(s) {

@@ -66,4 +66,41 @@ describe('lintPattern', () => {
     const findings = lintPattern(src)
     expect(findings).toEqual([])
   })
+
+  it('errors when no render function is defined', () => {
+    const src = `
+      var h = 0
+      export function beforeRender(delta) { h += delta * 0.001 }
+    `
+    const findings = lintPattern(src)
+    expect(findings.some(f => f.severity === 'error' && /No render function/.test(f.message))).toBe(true)
+  })
+
+  it('warns when render is declared without export', () => {
+    const src = `
+      function render(i) { hsv(i / 10, 1, 1) }
+    `
+    const findings = lintPattern(src)
+    expect(findings.some(f => f.severity === 'warn' && /render\(\) declared without 'export'/.test(f.message))).toBe(true)
+  })
+
+  it('warns when beforeRender is declared without export', () => {
+    const src = `
+      var h = 0
+      function beforeRender(delta) { h += delta * 0.001 }
+      export function render(i) { hsv(h, 1, 1) }
+    `
+    const findings = lintPattern(src)
+    expect(findings.some(f => f.severity === 'warn' && /beforeRender\(\) declared without 'export'/.test(f.message))).toBe(true)
+  })
+
+  it('does not warn when lifecycle hooks are properly exported', () => {
+    const src = `
+      var h = 0
+      export function beforeRender(delta) { h += delta * 0.001 }
+      export function render(i) { hsv(h, 1, 1) }
+    `
+    const findings = lintPattern(src)
+    expect(findings.filter(f => /declared without 'export'/.test(f.message))).toEqual([])
+  })
 })

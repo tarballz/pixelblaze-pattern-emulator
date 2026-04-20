@@ -11,6 +11,14 @@
 // no window/fetch/document handed into the scope. Trust model mirrors loading
 // a user script in any web-based IDE.
 
+// Lines prepended to the user's source before it hits the JS engine:
+//   1. `function anonymous(...) {` header injected by `new Function` (V8 + SpiderMonkey both emit exactly one line).
+//   2. The preamble line from prepareSource (always emitted, even when empty,
+//      because we template `${preamble}\n${stripped}` — that leading \n makes
+//      user line 1 become body line 2).
+// Subtract this from any runtime-error stack line to map back to the user's source.
+export const PATTERN_LINE_OFFSET = 2
+
 export function loadPattern(source, env) {
   const body = prepareSource(source)
   const keys = Object.keys(env)

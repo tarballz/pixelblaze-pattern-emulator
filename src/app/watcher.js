@@ -66,6 +66,16 @@ export function createWatcher({ intervalMs = 700, fetchImpl } = {}) {
         else stopTimer(entry)
       }
     },
+    pause() { this.setEnabled(false) },
+    resume() { this.setEnabled(true) },
+    // Update the baseline hash for a watched key without re-fetching. Used
+    // after we've written the file ourselves — the poller would otherwise
+    // see our own writeback as a "change" and fire onChange spuriously.
+    rebaseline(key, source) {
+      const entry = active.get(key)
+      if (!entry) return
+      entry.lastHash = hashSource(source)
+    },
     isWatchable,
     get active() { return active }
   }

@@ -3,12 +3,14 @@ import { createPixelCloud } from '../render/pixels.js'
 import { parseMapContent, prepareMap, selectRenderFnInfo, generateMap } from '../map/index.js'
 import { createVM } from '../vm/index.js'
 import { lintPattern } from '../vm/lint.js'
-import { buildControlPanel } from './controls.js'
+import { PATTERN_LINE_OFFSET } from '../vm/sandbox.js'
+import { buildControlPanel, readCurrentValues } from './controls.js'
 import { createPaletteStrip } from './palette.js'
 import { createInspector } from './inspector.js'
 import { unwrapPatternText } from './epe.js'
 import { createWatcher } from './watcher.js'
 import { createBrowser } from './browser.js'
+import { createEditor } from './editor.js'
 
 // ---------- DOM refs ----------
 const canvas = document.getElementById('stage')
@@ -17,6 +19,11 @@ const playPauseBtn = document.getElementById('playpause')
 const toggleLoaderBtn = document.getElementById('toggleLoader')
 const loaderEl = document.getElementById('loader')
 const errorsEl = document.getElementById('errors')
+const editorEl = document.getElementById('editor')
+const fileNameEl = document.getElementById('fileName')
+const renderIndicatorEl = document.getElementById('renderIndicator')
+const saveBtnEl = document.getElementById('saveBtn')
+const toggleEditorBtnEl = document.getElementById('toggleEditor')
 
 // ---------- Scene (persistent across reloads) ----------
 const sceneCtx = createScene(canvas)
@@ -47,6 +54,8 @@ let state = {
   },
   running: true,
   needsFit: true,
+  editorVisible: false,
+  dirty: false,           // editor buffer is newer than the on-disk source
   vm: null,
   pixelCloud: null,
   chosenRender: null,
@@ -59,13 +68,14 @@ const RECENTS_MAX = 8
 // Restore last-used options / inputs from localStorage
 try {
   const saved = JSON.parse(localStorage.getItem('pb_emu.v1') || '{}')
-  if (saved.patternSource) state.patternSource = saved.patternSource
+  // NB: patternSource / lastPattern / lastMap are intentionally NOT restored —
+  // the editor starts blank on every load, and those descriptors only make
+  // sense alongside their actual content (which isn't serialized). Restoring
+  // them independently leaves the UI pointing at a pattern that isn't loaded.
   if (saved.mapText) document.getElementById('mapPaste').value = saved.mapText
-  if (saved.patternPath) document.getElementById('patternPath').value = saved.patternPath
-  if (saved.mapPath) document.getElementById('mapPath').value = saved.mapPath
   if (saved.options) Object.assign(state.options, saved.options)
-  if (saved.lastPattern) state.lastPattern = saved.lastPattern
-  if (saved.lastMap) state.lastMap = saved.lastMap
+  // editorVisible intentionally not restored — every load starts with the
+  // editor hidden; the user opts in per session via the Edit button / `E`.
 } catch {}
 
 document.getElementById('normalizeMode').value = state.options.normalizeMode
@@ -74,6 +84,164 @@ document.getElementById('bloomToggle').checked = state.options.bloom
 document.getElementById('speed').value = String(state.options.speed ?? 1)
 document.getElementById('speedVal').textContent = (state.options.speed ?? 1).toFixed(2) + '\u00D7'
 sceneCtx.setBloomEnabled(state.options.bloom)
+
+// ---------- Editor (CodeMirror 6) ----------
+// Mounted before the watcher because loadPattern pokes editor.setDoc, and
+// the watcher's onChange closure captures `editor` by reference.
+const editor = createEditor({
+  parent: editorEl,
+  onChange: (source) => {
+    // Keep the current descriptor on in-editor edits so Save knows where to
+    // write back. If there's no prior descriptor (blank buffer scenario), fall
+    // back to an ephemeral 'editor' kind — download-only.
+    const prev = state.lastPattern
+    const descriptor = prev || { kind: 'editor', value: null, name: 'untitled.js' }
+    const previousValues = readCurrentValues(document.getElementById('controls'))
+    loadPattern(source, descriptor, { previousValues, fromEditor: true })
+  },
+  onSave: () => saveOrDownload()
+})
+
+function downloadPattern(text, name) {
+  const blob = new Blob([text], { type: 'text/javascript' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = /\.js$/i.test(name) ? name : `${name}.js`
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+}
+
+// Whether the active descriptor maps to a writable file on disk. The write
+// endpoint only permits the 'external' root (shipped samples stay read-only).
+function canWriteToDisk(d) {
+  return !!(d && d.kind === 'path' && d.root === 'external' && typeof d.relPath === 'string')
+}
+
+async function saveOrDownload() {
+  const d = state.lastPattern
+  const text = editor.getDoc()
+  if (canWriteToDisk(d)) {
+    await saveToDisk(d, text)
+  } else {
+    // Paste / URL / file / raw-editor buffers → no known disk target. Fall back
+    // to a browser download so the user can still keep their work.
+    downloadPattern(text, d?.name || 'pattern.js')
+    flashSaveButton('Downloaded', 'ok')
+  }
+}
+
+async function writeToDisk(d, text) {
+  const r = await fetch('/__pb_emu__/write', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ kind: 'pattern', root: d.root, path: d.relPath, content: text })
+  })
+  if (!r.ok) {
+    const msg = await r.text().catch(() => `HTTP ${r.status}`)
+    throw new Error(msg || `HTTP ${r.status}`)
+  }
+}
+
+async function saveToDisk(d, text) {
+  clearTimeout(autosaveTimer)
+  setSaveButtonState('Saving…', 'busy')
+  try {
+    // Watcher pause/rebaseline/resume avoids the poll reading our own write
+    // and firing onChange against whatever the user is typing now.
+    watcher.pause()
+    await writeToDisk(d, text)
+    state.dirty = false
+    updateFileNameLabel()
+    watcher.rebaseline('pattern', text)
+    flashSaveButton('Saved', 'ok')
+  } catch (err) {
+    showError(err)
+    flashSaveButton('Save failed', 'err')
+  } finally {
+    watcher.resume()
+  }
+}
+
+// Autosave: on editor edits to a path-writable descriptor, write through to
+// disk after a brief idle. The editor's onChange is already debounced ~200ms,
+// so this extra delay just coalesces fast bursts into one write.
+let autosaveTimer = null
+const AUTOSAVE_DELAY_MS = 200
+function scheduleAutosave() {
+  if (!canWriteToDisk(state.lastPattern)) return
+  clearTimeout(autosaveTimer)
+  autosaveTimer = setTimeout(runAutosave, AUTOSAVE_DELAY_MS)
+}
+async function runAutosave() {
+  const d = state.lastPattern
+  if (!canWriteToDisk(d)) return
+  const text = editor.getDoc()
+  try {
+    await writeToDisk(d, text)
+    // User may have swapped files mid-flight — only clear dirty if we're
+    // still on the same descriptor we just wrote.
+    if (state.lastPattern !== d) return
+    state.dirty = false
+    updateFileNameLabel()
+    // Re-arm the watcher so external edits land once the user idles. The
+    // first tick baselines against our freshly-written content, so we won't
+    // self-fire; rebaseline is belt-and-suspenders against a racing external
+    // writer between our POST and the poll.
+    watcher.watch('pattern', d, onExternalPatternChange)
+    watcher.rebaseline('pattern', text)
+  } catch (err) {
+    showError(err)
+    flashSaveButton('Save failed', 'err')
+  }
+}
+
+function onExternalPatternChange(fresh) {
+  const d = state.lastPattern
+  if (!d) return
+  editor?.setDoc(fresh)
+  loadPattern(fresh, d)
+}
+
+let saveFlashTimer = null
+function flashSaveButton(label, tone) {
+  setSaveButtonState(label, tone)
+  clearTimeout(saveFlashTimer)
+  saveFlashTimer = setTimeout(() => setSaveButtonState('Save', null), 1200)
+}
+function setSaveButtonState(label, tone) {
+  if (!saveBtnEl) return
+  saveBtnEl.textContent = label
+  saveBtnEl.dataset.tone = tone || ''
+}
+
+function updateFileNameLabel() {
+  if (!fileNameEl) return
+  const base = descriptorName(state.lastPattern) || 'untitled'
+  fileNameEl.textContent = state.dirty ? `${base} •` : base
+}
+
+saveBtnEl?.addEventListener('click', () => { saveOrDownload() })
+
+// ---------- Editor visibility toggle ----------
+function applyEditorVisibility() {
+  document.body.classList.toggle('editor-hidden', !state.editorVisible)
+  if (toggleEditorBtnEl) toggleEditorBtnEl.textContent = state.editorVisible ? 'Hide' : 'Edit'
+  // The scene's ResizeObserver on #stage picks up the grid re-layout and
+  // rescales the canvas on its own — no explicit renderer notification needed.
+}
+function toggleEditor() {
+  state.editorVisible = !state.editorVisible
+  applyEditorVisibility()
+  persist()
+  if (state.editorVisible) editor.focus()
+}
+toggleEditorBtnEl?.addEventListener('click', toggleEditor)
+applyEditorVisibility()
+
+if (fileNameEl) fileNameEl.textContent = descriptorName(state.lastPattern) || 'untitled'
 
 // ---------- Watcher (polls path/url descriptors for external edits) ----------
 const watcher = createWatcher()
@@ -134,12 +302,33 @@ function renderRecents() {
 
 // ---------- Error display ----------
 function showError(err) {
-  if (!err) { errorsEl.textContent = ''; return }
+  if (!err) {
+    errorsEl.textContent = ''
+    editor?.setDiagnostics([])
+    return
+  }
   const msg = err instanceof Error
     ? (err.stack && err.stack.includes(err.message) ? err.stack : `${err.message}\n${err.stack || ''}`)
     : String(err)
   errorsEl.textContent = msg
   console.error(err)
+  const diag = extractErrorLocation(err)
+  if (diag) editor?.setDiagnostics([diag])
+}
+
+// Parse a runtime error's stack and locate it in the user's source.
+// The VM runs patterns inside a synthesized function wrapper, so stack-reported
+// line numbers are offset by PATTERN_LINE_OFFSET from the editor's line 1.
+function extractErrorLocation(err) {
+  if (!err || !err.stack) return null
+  const m = err.stack.match(/<anonymous>:(\d+):(\d+)/)
+            || err.stack.match(/eval:(\d+):(\d+)/)
+            || err.stack.match(/Function:(\d+):(\d+)/)
+  if (!m) return null
+  const line = parseInt(m[1], 10) - PATTERN_LINE_OFFSET
+  const col = parseInt(m[2], 10)
+  if (!Number.isFinite(line) || line < 1) return null
+  return { line, col, severity: 'error', message: err.message || String(err) }
 }
 
 // ---------- Tab switching ----------
@@ -201,8 +390,8 @@ createBrowser({
   kind: 'pattern',
   filter: (name) => /\.(js|epe)$/i.test(name),
   emptyMessage: 'No .js or .epe files here.',
-  onPick: async (url, { name }) => {
-    try { loadPattern(await fetchText(url), { kind: 'path', value: url, name }) }
+  onPick: async (url, { name, root, relPath }) => {
+    try { loadPattern(await fetchText(url), { kind: 'path', value: url, name, root, relPath }) }
     catch (err) { showError(err) }
   }
 })
@@ -227,8 +416,8 @@ createBrowser({
   kind: 'map',
   filter: (name) => /\.(csv|json|js)$/i.test(name),
   emptyMessage: 'No .csv / .json / .js files here.',
-  onPick: async (url, { name }) => {
-    try { loadMap(await fetchText(url), { kind: 'path', value: url, name }) }
+  onPick: async (url, { name, root, relPath }) => {
+    try { loadMap(await fetchText(url), { kind: 'path', value: url, name, root, relPath }) }
     catch (err) { showError(err) }
   }
 })
@@ -392,6 +581,7 @@ document.addEventListener('keydown', (e) => {
   if (e.key === '.')      { if (!state.running) runOnePatternFrame(1000 / 60); return }
   if (e.key === 'r' || e.key === 'R') { reloadPattern(); return }
   if (e.key === 'l' || e.key === 'L') { loaderEl.classList.toggle('hidden'); return }
+  if (e.key === 'e' || e.key === 'E') { toggleEditor(); return }
   if (e.key === '?')      { helpOverlay.classList.toggle('hidden'); return }
 })
 
@@ -444,10 +634,7 @@ speedInput.addEventListener('input', () => {
 function persist() {
   try {
     localStorage.setItem('pb_emu.v1', JSON.stringify({
-      patternSource: state.patternSource,
       mapText: document.getElementById('mapPaste').value,
-      patternPath: document.getElementById('patternPath').value,
-      mapPath: document.getElementById('mapPath').value,
       lastPattern: state.lastPattern,
       lastMap: state.lastMap,
       options: state.options
@@ -456,7 +643,10 @@ function persist() {
 }
 
 // ---------- Load flow ----------
-function loadPattern(text, descriptor) {
+// `fromEditor` distinguishes in-browser typing (no Recents, no editor.setDoc,
+// mark dirty, pause watcher) from external loads (push Recents, sync buffer,
+// clear dirty, re-watch).
+function loadPattern(text, descriptor, { previousValues, fromEditor = false } = {}) {
   showError(null)
   // Auto-unwrap EPE: the file dialog may pass in a raw .epe JSON, drag-drop
   // can too, and even the URL/Path fetchers can hit ".epe" endpoints.
@@ -465,13 +655,35 @@ function loadPattern(text, descriptor) {
   if (descriptor) {
     const d = name && !descriptor.name ? { ...descriptor, name } : descriptor
     state.lastPattern = d
-    pushRecent('pattern', d)
-    watcher.watch('pattern', d, (fresh) => loadPattern(fresh, d))
+    if (fromEditor) {
+      // User is typing. Don't pollute Recents with every keystroke, don't
+      // re-push into the editor (infinite loop), drop the pattern watch so
+      // a poll of the on-disk copy doesn't clobber in-flight edits, and
+      // (if writable) schedule an autosave so the file on disk tracks the
+      // editor buffer — matches how the Pixelblaze web IDE behaves.
+      state.dirty = true
+      watcher.stop('pattern')
+      scheduleAutosave()
+    } else {
+      state.dirty = false
+      clearTimeout(autosaveTimer)
+      // Ephemeral 'editor' kind exists only when the user starts typing into
+      // a blank buffer with no prior pattern — no Recents entry / no watch.
+      if (d.kind !== 'editor') {
+        pushRecent('pattern', d)
+        watcher.watch('pattern', d, onExternalPatternChange)
+      } else {
+        watcher.stop('pattern')
+      }
+      // Sync editor buffer only on external loads (avoid self-feedback loop).
+      editor?.setDoc(source)
+    }
   }
+  updateFileNameLabel()
   updateReloadButton()
   showLintFindings(lintPattern(source))
   persist()
-  rebuildIfReady()
+  rebuildIfReady({ previousValues })
 }
 
 async function reloadPattern() {
@@ -572,12 +784,12 @@ function loadGeneratedMap(params) {
   } catch (err) { showError(err) }
 }
 
-function rebuildIfReady() {
+function rebuildIfReady({ previousValues } = {}) {
   if (!state.patternSource || !state.mapParsed) return
-  try { rebuild() } catch (err) { showError(err) }
+  try { rebuild({ previousValues }) } catch (err) { showError(err) }
 }
 
-function rebuild() {
+function rebuild({ previousValues } = {}) {
   const prepared = prepareMap(state.mapParsed, state.options)
   const { pixelCount, coords, dim, normalized } = prepared
 
@@ -602,8 +814,9 @@ function rebuild() {
   // Build the control panel — this replaces applyControlDefaults' single
   // default invocation with live widgets, each setting its own initial value.
   const controlsEl = document.getElementById('controls')
-  buildControlPanel(controlsEl, state.vm.classified.controls, state.patternSource)
+  buildControlPanel(controlsEl, state.vm.classified.controls, state.patternSource, previousValues)
 
+  if (renderIndicatorEl) renderIndicatorEl.textContent = info.picked
   countsEl.textContent = `${pixelCount} LEDs · ${dim}D (${prepared.source ?? 'map'}) · ${info.picked}`
   showError(null)
 

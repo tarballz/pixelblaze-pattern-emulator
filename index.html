@@ -6,7 +6,17 @@
     <title>pb_emu — Pixelblaze Emulator</title>
     <link rel="stylesheet" href="/src/app/style.css" />
   </head>
-  <body>
+  <body class="editor-hidden">
+    <header id="topbar">
+      <span id="pbemu-logo">pb_emu</span>
+      <span id="fileName">untitled</span>
+      <span id="topbar-spacer"></span>
+      <span id="renderIndicator" title="Active render function">—</span>
+      <button id="toggleEditor" type="button" title="Show / hide editor (E)">Edit</button>
+      <button id="saveBtn" type="button" title="Save / download (Cmd/Ctrl-S)">Save</button>
+    </header>
+    <div id="editor"></div>
+    <div id="viewport">
     <canvas id="stage"></canvas>
     <div id="hud">
       <div id="stats">
@@ -133,9 +143,11 @@
         <li><kbd>.</kbd> single-frame step (while paused)</li>
         <li><kbd>R</kbd> reload current pattern</li>
         <li><kbd>L</kbd> toggle loader panel</li>
+        <li><kbd>E</kbd> show / hide editor</li>
         <li><kbd>?</kbd> toggle this help</li>
       </ul>
       <p>Drop <code>.js</code> or <code>.epe</code> for a pattern, <code>.csv</code>/<code>.json</code> for a map.</p>
+    </div>
     </div>
     <div id="dropTarget" class="hidden">Drop to load</div>
 

@@ -95,7 +95,9 @@ export function createBrowser({ container, kind, onPick, filter, emptyMessage = 
       const r = row(f, 'file', () => {
         activeUrl = url
         markActive()
-        onPick(url, { name: f })
+        // root + relPath are carried through so callers that can save back
+        // (path-kind descriptors) know the server-side write target.
+        onPick(url, { name: f, root: current.root, relPath: rel })
       })
       r.dataset.url = url
       if (url === activeUrl) r.classList.add('pbb-active')
