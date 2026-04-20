@@ -25,7 +25,7 @@ function makeAxisLabel(text, position, color) {
 }
 
 export function createScene(canvas) {
-  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true })
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true })
   renderer.setPixelRatio(window.devicePixelRatio)
   renderer.setSize(canvas.clientWidth, canvas.clientHeight, false)
   // LEDs are authored in direct linear [0, 1] — ACES tone mapping would crush
@@ -79,6 +79,38 @@ export function createScene(canvas) {
   // Also observe the canvas's own size (it's 100vw/vh so usually matches window).
   new ResizeObserver(resize).observe(canvas)
 
+  // Fit camera so a bounding sphere of `radius` around `center` is fully in view.
+  function fitTo(center, radius) {
+    const fov = (camera.fov * Math.PI) / 180
+    const dist = radius / Math.sin(fov / 2) * 1.15  // 15% margin
+    const dir = new THREE.Vector3(1, 1, 1).normalize()
+    camera.position.copy(new THREE.Vector3(...center)).addScaledVector(dir, dist)
+    controls.target.set(...center)
+    controls.update()
+  }
+
+  // Snap to one of four preset orientations, fitted to the current controls.target
+  // and a distance preserving the current framing.
+  function setView(which) {
+    const t = controls.target
+    const d = camera.position.distanceTo(t) || 3
+    const offsets = {
+      front: [0, 0, d],
+      top:   [0, d, 0.001],
+      side:  [d, 0, 0],
+      iso:   [d * 0.577, d * 0.577, d * 0.577]
+    }
+    const [x, y, z] = offsets[which] || offsets.iso
+    camera.position.set(t.x + x, t.y + y, t.z + z)
+    camera.lookAt(t)
+    controls.update()
+  }
+
+  function setBloom({ strength, radius }) {
+    if (strength != null) bloom.strength = strength
+    if (radius != null) bloom.radius = radius
+  }
+
   return {
     renderer, scene, camera, controls, composer, bloom,
     render() {
@@ -87,6 +119,9 @@ export function createScene(canvas) {
     },
     setBloomEnabled(on) {
       bloom.enabled = !!on
-    }
+    },
+    fitTo,
+    setView,
+    setBloom
   }
 }

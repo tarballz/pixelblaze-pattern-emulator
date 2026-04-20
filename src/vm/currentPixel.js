@@ -64,22 +64,11 @@ export function setPalette(arr) {
   }
 }
 
-// paint(value, brightness=1) looks up the palette at `value` (wraps 0..1),
-// multiplies by brightness. Reads the stored array directly so live mutations
-// propagate without a re-setPalette call. Assumes palette entries are sorted
-// by position (Pixelblaze convention); binary-searching is unnecessary at
-// palette sizes ≤ ~16 entries.
-export function paint(value, brightness = 1) {
-  const p = state.palette
-  if (!p || p.length < 4) {
-    // no palette set — fall back to hsv(value, 1, brightness) per PB
-    hsv(value, 1, brightness)
-    return
-  }
-  const v = frac(value)
+// Sample a palette (flat [pos, r, g, b, ...]) at `v` in [0, 1]. Returns [r, g, b].
+// Exported for reuse by the palette-strip viewer. Assumes stops are sorted
+// by position (Pixelblaze convention); linear scan is fine for ≤ ~16 entries.
+export function samplePalette(p, v) {
   const entries = Math.floor(p.length / 4)
-
-  // Find the bracketing pair.
   let loIdx = 0
   for (let i = 0; i < entries - 1; i++) {
     if (v >= p[i * 4] && v <= p[(i + 1) * 4]) { loIdx = i; break }
@@ -87,11 +76,30 @@ export function paint(value, brightness = 1) {
   }
   const loP = loIdx * 4
   const hiP = Math.min((loIdx + 1) * 4, (entries - 1) * 4)
-
   const lo = p[loP], hi = p[hiP]
   const span = hi - lo
   const t = span > 0 ? (v - lo) / span : 0
-  state.r = (p[loP + 1] + (p[hiP + 1] - p[loP + 1]) * t) * brightness
-  state.g = (p[loP + 2] + (p[hiP + 2] - p[loP + 2]) * t) * brightness
-  state.b = (p[loP + 3] + (p[hiP + 3] - p[loP + 3]) * t) * brightness
+  return [
+    p[loP + 1] + (p[hiP + 1] - p[loP + 1]) * t,
+    p[loP + 2] + (p[hiP + 2] - p[loP + 2]) * t,
+    p[loP + 3] + (p[hiP + 3] - p[loP + 3]) * t
+  ]
+}
+
+export function getPalette() { return state.palette }
+
+// paint(value, brightness=1) looks up the palette at `value` (wraps 0..1),
+// multiplies by brightness. Reads the stored array directly so live mutations
+// propagate without a re-setPalette call.
+export function paint(value, brightness = 1) {
+  const p = state.palette
+  if (!p || p.length < 4) {
+    // no palette set — fall back to hsv(value, 1, brightness) per PB
+    hsv(value, 1, brightness)
+    return
+  }
+  const [r, g, b] = samplePalette(p, frac(value))
+  state.r = r * brightness
+  state.g = g * brightness
+  state.b = b * brightness
 }

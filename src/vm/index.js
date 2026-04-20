@@ -5,9 +5,19 @@ import { loadPattern, classifyExports, applyControlDefaults } from './sandbox.js
 import { resetPixel, readPixel } from './currentPixel.js'
 
 export function createVM({ source, pixelCount, mapDim }) {
-  const startTime = performance.now()
+  // Sim clock: time() inside a pattern reads ctx.now(), which returns a value
+  // we control. advance() adds `deltaMs * speed` so a speed slider slows/
+  // fast-forwards the pattern, and a paused host can step exactly one frame
+  // without wall-clock drift.
   const ctx = {
-    now: () => performance.now() - startTime,
+    simTime: 0,
+    speed: 1,
+    now: () => ctx.simTime,
+    advance(realDeltaMs) {
+      const d = realDeltaMs * ctx.speed
+      ctx.simTime += d
+      return d
+    },
     prngState: 1,
     transformStack: [identity()],
     mapDim
@@ -20,13 +30,20 @@ export function createVM({ source, pixelCount, mapDim }) {
   const classified = classifyExports(rawExports)
   applyControlDefaults(classified.controls)
 
-  let lastFrame = ctx.now()
+  let lastWall = performance.now()
 
-  function beforeRender() {
-    const t = ctx.now()
-    const delta = t - lastFrame
-    lastFrame = t
-    if (classified.beforeRender) classified.beforeRender(delta)
+  // If the host doesn't pass a delta, derive it from wall time since the last
+  // call (matches the original behavior).
+  function beforeRender(realDeltaMs) {
+    if (realDeltaMs == null) {
+      const wall = performance.now()
+      realDeltaMs = wall - lastWall
+      lastWall = wall
+    } else {
+      lastWall = performance.now()
+    }
+    const simDelta = ctx.advance(realDeltaMs)
+    if (classified.beforeRender) classified.beforeRender(simDelta)
   }
 
   return {

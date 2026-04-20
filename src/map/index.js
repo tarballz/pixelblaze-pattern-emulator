@@ -42,4 +42,4 @@ export { normalize, detectDim }
 export { parseMarimapperCSV } from './csv.js'
 export { parsePixelblazeJSON } from './json.js'
 export { runMapperFunction } from './mapperFn.js'
-export { selectRenderFn } from './dispatch.js'
+export { selectRenderFn, selectRenderFnInfo } from './dispatch.js'

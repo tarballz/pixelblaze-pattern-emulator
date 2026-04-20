@@ -90,5 +90,10 @@ export function createPixelCloud(scene, { coords, pixelCount }) {
     mat.dispose()
   }
 
-  return { points, setColors, dispose, scale, center: [cx, cy, cz] }
+  function setSize(s) {
+    mat.size = s
+  }
+
+  const bounds = { min: [minX, minY, minZ], max: [maxX, maxY, maxZ] }
+  return { points, setColors, setSize, dispose, scale, center: [cx, cy, cz], positions, bounds }
 }
