@@ -83,7 +83,8 @@ All Pixelblaze built-ins except 16.16 fixed-point arithmetic:
 - **Screenshot** — download the current canvas as a PNG.
 - **Reload / recents** — reload re-fetches the current pattern (path/url); the Recents dropdown keeps the last 8 path/url loads for pattern and map.
 - **Auto-reload** — see [Auto-reload on external edits](#auto-reload-on-external-edits).
-- **Linter** — flags hardware-fidelity gotchas at load: `array()` / array-literals in render, `time()` in render, nested functions in render, expensive ops per frame (`perlin`, `atan2`, `sqrt`, `sin`, etc.).
+- **Built-in editor** — CodeMirror 6 with JS syntax highlighting, inline lint markers, and Ctrl/Cmd-S to save. Hidden by default; press <kbd>E</kbd> (or click **Edit**) to open. Edits to a Path-loaded pattern with a writable external root autosave through to disk (~400 ms after typing stops); other sources fall back to download-on-save.
+- **Linter** — flags hardware-fidelity gotchas and structural gaps at load: no render function at all, lifecycle hooks declared without `export`, `array()` / array-literals in render, `time()` in render, nested functions in render, and expensive ops per frame (`perlin`, `atan2`, `sqrt`, `sin`, etc.). Findings render as inline squiggles in the editor.
 - **Render-fn indicator** — the HUD shows which render function actually runs (e.g. `render2D (z dropped)` for a 3D map with only `render2D` exported).
 
 ### Keyboard shortcuts
@@ -94,6 +95,8 @@ All Pixelblaze built-ins except 16.16 fixed-point arithmetic:
 | <kbd>.</kbd> | single-frame step (while paused) |
 | <kbd>R</kbd> | reload current pattern |
 | <kbd>L</kbd> | toggle loader panel |
+| <kbd>E</kbd> | toggle code editor |
+| <kbd>Ctrl/Cmd-S</kbd> | save editor buffer (autosave if path-writable; otherwise download) |
 | <kbd>?</kbd> | help overlay |
 
 ## Known fidelity gaps vs real hardware
@@ -106,11 +109,13 @@ All Pixelblaze built-ins except 16.16 fixed-point arithmetic:
 ## Architecture
 
 ```
-vite.config.js            Dev-server plugin: /__pb_emu__/list (dir browser JSON)
-                          and /__pb_emu__/external (serves PB_EMU_EXTERNAL_* dirs)
+vite.config.js            Dev-server plugin: /__pb_emu__/list (dir browser JSON),
+                          /__pb_emu__/external (serves PB_EMU_EXTERNAL_* dirs),
+                          and /__pb_emu__/write (autosave writes)
 src/
   app/
-    main.js              Loader UI, render loop, HUD, keyboard/drag-drop, persistence
+    main.js              Loader UI, render loop, HUD, keyboard/drag-drop, persistence, autosave
+    editor.js            CodeMirror 6 wrapper: debounced onChange, inline lint diagnostics
     controls.js          Live widget panel for exported UI controls
     palette.js           Palette gradient strip
     inspector.js         Click-to-inspect LED overlay
@@ -153,6 +158,7 @@ Suites:
 - `palette.test.js` — `samplePalette` interpolation
 - `controls.test.js` — control widget helpers
 - `watcher.test.js` — auto-reload watcher (baseline, change-detect, stop, enable/disable, error retry)
+- `editor.test.js` — CodeMirror wrapper mount/setDoc/setDiagnostics lifecycle
 - `integration.test.js` — real patterns (`solid_color`, `coordinate_debug`, `lava_flow`, `expanding_rings`, `fire`) against the real egg map; skipped if `~/code/pb/` isn't present
 
 ## Security note
