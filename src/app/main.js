@@ -304,7 +304,7 @@ function renderRecents() {
 function showError(err) {
   if (!err) {
     errorsEl.textContent = ''
-    editor?.setDiagnostics([])
+    editor?.setRuntimeDiagnostic(null)
     return
   }
   const msg = err instanceof Error
@@ -312,8 +312,7 @@ function showError(err) {
     : String(err)
   errorsEl.textContent = msg
   console.error(err)
-  const diag = extractErrorLocation(err)
-  if (diag) editor?.setDiagnostics([diag])
+  editor?.setRuntimeDiagnostic(extractErrorLocation(err))
 }
 
 // Parse a runtime error's stack and locate it in the user's source.
@@ -725,6 +724,12 @@ function updateReloadButton() {
 }
 
 function showLintFindings(findings) {
+  // Editor-side: findings with positions become inline squiggles.
+  const diags = findings
+    .filter(f => Number.isFinite(f?.line))
+    .map(f => ({ line: f.line, col: f.col, endLine: f.endLine, endCol: f.endCol, severity: f.severity, message: f.message }))
+  editor?.setLintDiagnostics(diags)
+  // DOM panel: full list, severity-tagged, collapsible.
   const el = document.getElementById('warnings')
   if (!el) return
   el.replaceChildren()

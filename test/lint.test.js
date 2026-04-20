@@ -103,4 +103,28 @@ describe('lintPattern', () => {
     const findings = lintPattern(src)
     expect(findings.filter(f => /declared without 'export'/.test(f.message))).toEqual([])
   })
+
+  it('emits 1-based line/col positions for body findings', () => {
+    const src = [
+      'export function render(i) {',    // line 1
+      '  var t = time(0.1)',             // line 2, `time(` starts at col 11
+      '  hsv(t, 1, 1)',                  // line 3
+      '}'
+    ].join('\n')
+    const f = lintPattern(src).find(x => /time\(\)/.test(x.message))
+    expect(f).toBeTruthy()
+    expect(f.line).toBe(2)
+    expect(f.col).toBe(11)
+    expect(f.endLine).toBe(2)
+    expect(typeof f.endCol).toBe('number')
+  })
+
+  it('positions a bare-lifecycle warning on the function name identifier', () => {
+    const src = 'function render(i) { hsv(0, 1, 1) }'
+    const f = lintPattern(src).find(x => /declared without 'export'/.test(x.message))
+    expect(f).toBeTruthy()
+    expect(f.line).toBe(1)
+    expect(f.col).toBe(10)        // 'render' starts at column 10 (1-based)
+    expect(f.endCol).toBe(16)
+  })
 })

@@ -158,7 +158,7 @@ Suites:
 - `palette.test.js` — `samplePalette` interpolation
 - `controls.test.js` — control widget helpers
 - `watcher.test.js` — auto-reload watcher (baseline, change-detect, stop, enable/disable, error retry)
-- `editor.test.js` — CodeMirror wrapper mount/setDoc/setDiagnostics lifecycle
+- `editor.test.js` — CodeMirror wrapper mount/setDoc/diagnostics lifecycle
 - `integration.test.js` — real patterns (`solid_color`, `coordinate_debug`, `lava_flow`, `expanding_rings`, `fire`) against the real egg map; skipped if `~/code/pb/` isn't present
 
 ## Security note

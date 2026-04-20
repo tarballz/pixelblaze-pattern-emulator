@@ -6,15 +6,19 @@
 // - Allow the host to swap the buffer (external pattern load) without
 //   firing onChange — otherwise every path/drop/recents load would re-enter
 //   the editor-driven reload path and duplicate work.
-// - Expose setDiagnostics({line, message, severity}[]) for inline lint /
-//   runtime error markers. The linter callback reads a mutable array so
-//   forceLinting can flush on host-driven updates.
+// - Expose setLintDiagnostics / setRuntimeDiagnostic for inline markers.
+//   Two channels: lint findings (persistent until the next call replaces
+//   them) and a single runtime error marker (dropped on any user keystroke
+//   because its position is frozen against the prior doc). Diagnostics are
+//   committed via @codemirror/lint's setDiagnostics transaction spec, which
+//   is synchronous — no linter-callback indirection, so host updates show up
+//   on the next dispatch tick without waiting for a scheduled lint run.
 
 import { EditorView, basicSetup } from 'codemirror'
 import { keymap } from '@codemirror/view'
 import { Annotation } from '@codemirror/state'
 import { javascript } from '@codemirror/lang-javascript'
-import { linter, lintGutter, forceLinting } from '@codemirror/lint'
+import { lintGutter, setDiagnostics } from '@codemirror/lint'
 import { oneDark } from '@codemirror/theme-one-dark'
 import { indentWithTab } from '@codemirror/commands'
 
@@ -23,21 +27,16 @@ import { indentWithTab } from '@codemirror/commands'
 const fromHost = Annotation.define()
 
 export function createEditor({ parent, onChange, onSave, debounceMs = 200 }) {
-  let diagnostics = []
+  let lintDiags = []
+  let runtimeDiag = null
   let debounceTimer = null
 
   const changeHandler = EditorView.updateListener.of((update) => {
     if (!update.docChanged) return
-    // Ignore programmatic replacements (host load, external file watcher).
     if (update.transactions.some(tr => tr.annotation(fromHost))) return
-    // Any user edit invalidates previously-reported runtime/rebuild diagnostics:
-    // their line/col was frozen against the prior doc, so they'd paint at the
-    // wrong position until the debounced onChange → rebuild refreshes them.
-    // Clear synchronously; rebuild will repopulate within the debounce window
-    // if the error is still real.
-    if (diagnostics.length) {
-      diagnostics = []
-      forceLinting(view)
+    if (runtimeDiag) {
+      runtimeDiag = null
+      commit()
     }
     clearTimeout(debounceTimer)
     debounceTimer = setTimeout(() => {
@@ -53,7 +52,6 @@ export function createEditor({ parent, onChange, onSave, debounceMs = 200 }) {
       javascript(),
       oneDark,
       lintGutter(),
-      linter(() => diagnostics.map(toDiagnostic).filter(Boolean), { delay: 0 }),
       keymap.of([
         indentWithTab,
         {
@@ -68,6 +66,12 @@ export function createEditor({ parent, onChange, onSave, debounceMs = 200 }) {
       changeHandler
     ]
   })
+
+  function commit() {
+    const all = runtimeDiag ? [...lintDiags, runtimeDiag] : lintDiags
+    const diags = all.map(toDiagnostic).filter(Boolean)
+    view.dispatch(setDiagnostics(view.state, diags))
+  }
 
   // Convert {line, col?, endLine?, endCol?, message, severity} → CM6 Diagnostic.
   // Line / col are 1-based in the input (matches Error.stack conventions).
@@ -98,9 +102,13 @@ export function createEditor({ parent, onChange, onSave, debounceMs = 200 }) {
       })
     },
     getDoc() { return view.state.doc.toString() },
-    setDiagnostics(next) {
-      diagnostics = Array.isArray(next) ? next : []
-      forceLinting(view)
+    setLintDiagnostics(next) {
+      lintDiags = Array.isArray(next) ? next : []
+      commit()
+    },
+    setRuntimeDiagnostic(next) {
+      runtimeDiag = next || null
+      commit()
     },
     focus() { view.focus() },
     destroy() { clearTimeout(debounceTimer); view.destroy() }
