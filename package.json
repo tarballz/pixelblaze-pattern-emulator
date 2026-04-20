@@ -1,0 +1,20 @@
+{
+  "name": "pb_emu",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "three": "^0.161.0"
+  },
+  "devDependencies": {
+    "vite": "^5.1.0",
+    "vitest": "^1.3.0"
+  }
+}

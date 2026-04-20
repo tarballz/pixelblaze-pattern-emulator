@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>pb_emu — Pixelblaze Emulator</title>
+    <link rel="stylesheet" href="/src/app/style.css" />
+  </head>
+  <body>
+    <canvas id="stage"></canvas>
+    <div id="hud">
+      <div id="stats">
+        <span id="fps">— fps</span>
+        <span id="counts">0 LEDs · —</span>
+      </div>
+      <button id="playpause" type="button">Pause</button>
+      <button id="toggleLoader" type="button">Load…</button>
+    </div>
+    <div id="loader" class="hidden">
+      <h3>Pattern</h3>
+      <div class="tabs" data-group="pattern">
+        <button data-tab="file" class="active">File</button>
+        <button data-tab="paste">Paste</button>
+        <button data-tab="url">URL</button>
+        <button data-tab="path">Path</button>
+      </div>
+      <div class="tabpanel" data-panel="pattern-file">
+        <input type="file" id="patternFile" accept=".js,text/javascript" />
+      </div>
+      <div class="tabpanel hidden" data-panel="pattern-paste">
+        <textarea id="patternPaste" placeholder="// paste Pixelblaze pattern JS"></textarea>
+        <button id="patternPasteLoad">Load</button>
+      </div>
+      <div class="tabpanel hidden" data-panel="pattern-url">
+        <input type="text" id="patternUrl" placeholder="https://raw.githubusercontent.com/…/pattern.js" />
+        <button id="patternUrlLoad">Fetch</button>
+      </div>
+      <div class="tabpanel hidden" data-panel="pattern-path">
+        <input type="text" id="patternPath" placeholder="/pb/pattern_maker/examples/organic/lava_flow.js" />
+        <button id="patternPathLoad">Load</button>
+      </div>
+
+      <h3>Pixel Map</h3>
+      <div class="tabs" data-group="map">
+        <button data-tab="file" class="active">File</button>
+        <button data-tab="paste">Paste</button>
+        <button data-tab="url">URL</button>
+        <button data-tab="path">Path</button>
+      </div>
+      <div class="tabpanel" data-panel="map-file">
+        <input type="file" id="mapFile" accept=".csv,.json,.js,text/*" />
+      </div>
+      <div class="tabpanel hidden" data-panel="map-paste">
+        <textarea id="mapPaste" placeholder="CSV, JSON array, or JS function(pixelCount)"></textarea>
+        <button id="mapPasteLoad">Load</button>
+      </div>
+      <div class="tabpanel hidden" data-panel="map-url">
+        <input type="text" id="mapUrl" placeholder="URL to .csv / .json / .js" />
+        <button id="mapUrlLoad">Fetch</button>
+      </div>
+      <div class="tabpanel hidden" data-panel="map-path">
+        <input type="text" id="mapPath" placeholder="/pb/pattern_maker/maps/egg_mapping/led_map_3d.csv" />
+        <button id="mapPathLoad">Load</button>
+      </div>
+
+      <h3>Options</h3>
+      <label><span>Normalize</span>
+        <select id="normalizeMode">
+          <option value="fill" selected>Fill (stretch)</option>
+          <option value="contain">Contain (aspect-preserving)</option>
+        </select>
+      </label>
+      <label><span>Force dim</span>
+        <select id="forceDim">
+          <option value="auto" selected>Auto</option>
+          <option value="1">1D</option>
+          <option value="2">2D</option>
+          <option value="3">3D</option>
+        </select>
+      </label>
+      <label><span>Swap Y/Z</span><input type="checkbox" id="swapYZ" /></label>
+      <label><span>Bloom</span><input type="checkbox" id="bloomToggle" checked /></label>
+
+      <div id="errors"></div>
+    </div>
+
+    <script type="module" src="/src/app/main.js"></script>
+  </body>
+</html>
