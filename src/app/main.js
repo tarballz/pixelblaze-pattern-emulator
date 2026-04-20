@@ -1,11 +1,12 @@
 import { createScene } from '../render/scene.js'
 import { createPixelCloud } from '../render/pixels.js'
-import { parseMapContent, prepareMap, selectRenderFnInfo } from '../map/index.js'
+import { parseMapContent, prepareMap, selectRenderFnInfo, generateMap } from '../map/index.js'
 import { createVM } from '../vm/index.js'
 import { lintPattern } from '../vm/lint.js'
 import { buildControlPanel } from './controls.js'
 import { createPaletteStrip } from './palette.js'
 import { createInspector } from './inspector.js'
+import { unwrapPatternText } from './epe.js'
 
 // ---------- DOM refs ----------
 const canvas = document.getElementById('stage')
@@ -202,6 +203,27 @@ document.getElementById('mapPathLoad').addEventListener('click', async () => {
   catch (err) { showError(err) }
 })
 
+// Map generator
+const mapGenShape = document.getElementById('mapGenShape')
+const mapGenW = document.getElementById('mapGenW')
+const mapGenH = document.getElementById('mapGenH')
+const mapGenD = document.getElementById('mapGenD')
+function updateGenInputs() {
+  const s = mapGenShape.value
+  mapGenH.style.display = s === '1d' ? 'none' : ''
+  mapGenD.style.display = s === '3d' ? '' : 'none'
+}
+mapGenShape.addEventListener('change', updateGenInputs)
+updateGenInputs()
+document.getElementById('mapGenLoad').addEventListener('click', () => {
+  loadGeneratedMap({
+    shape: mapGenShape.value,
+    w: parseInt(mapGenW.value, 10) || 1,
+    h: parseInt(mapGenH.value, 10) || 1,
+    d: parseInt(mapGenD.value, 10) || 1
+  })
+})
+
 // Options
 document.getElementById('normalizeMode').addEventListener('change', (e) => {
   state.options.normalizeMode = e.target.value
@@ -307,10 +329,16 @@ document.addEventListener('drop', async (e) => {
     const name = file.name.toLowerCase()
     try {
       const text = await readFile(file)
-      if (name.endsWith('.csv') || name.endsWith('.json')) {
+      if (name.endsWith('.csv')) {
         loadMap(text, { kind: 'file', value: null, name: file.name })
-      } else if (name.endsWith('.js')) {
+      } else if (name.endsWith('.epe') || name.endsWith('.js')) {
         loadPattern(text, { kind: 'file', value: null, name: file.name })
+      } else if (name.endsWith('.json')) {
+        // Ambiguous — EPE is valid JSON. If it parses as an EPE, unwrap as a
+        // pattern; otherwise treat as a map.
+        const epe = unwrapPatternText(text, file.name)
+        if (epe.source !== text) loadPattern(text, { kind: 'file', value: null, name: file.name })
+        else loadMap(text, { kind: 'file', value: null, name: file.name })
       } else {
         showError(new Error(`Unsupported drop: ${file.name}`))
       }
@@ -391,12 +419,16 @@ function persist() {
 }
 
 // ---------- Load flow ----------
-function loadPattern(source, descriptor) {
+function loadPattern(text, descriptor) {
   showError(null)
+  // Auto-unwrap EPE: the file dialog may pass in a raw .epe JSON, drag-drop
+  // can too, and even the URL/Path fetchers can hit ".epe" endpoints.
+  const { source, name } = unwrapPatternText(text, descriptor?.name)
   state.patternSource = source
   if (descriptor) {
-    state.lastPattern = descriptor
-    pushRecent('pattern', descriptor)
+    const d = name && !descriptor.name ? { ...descriptor, name } : descriptor
+    state.lastPattern = d
+    pushRecent('pattern', d)
   }
   updateReloadButton()
   showLintFindings(lintPattern(source))
@@ -427,6 +459,8 @@ async function reloadMap() {
       loadMap(await fetchText(d.value), d)
     } else if (d.kind === 'paste') {
       loadMap(d.value, d)
+    } else if (d.kind === 'generated') {
+      loadGeneratedMap(JSON.parse(d.value))
     }
   } catch (err) { showError(err) }
 }
@@ -456,18 +490,35 @@ function showLintFindings(findings) {
 
 function loadMap(text, descriptor) {
   showError(null)
+  let parsed
   try {
-    state.mapParsed = parseMapContent(text, { pixelCountHint: 1024 })
+    parsed = parseMapContent(text, { pixelCountHint: 1024 })
   } catch (err) {
     showError(err)
     return
   }
+  applyMapParsed(parsed, descriptor)
+}
+
+function applyMapParsed(parsed, descriptor) {
+  showError(null)
+  state.mapParsed = parsed
   if (descriptor) {
     state.lastMap = descriptor
     pushRecent('map', descriptor)
   }
   persist()
   rebuildIfReady()
+}
+
+function loadGeneratedMap(params) {
+  try {
+    const parsed = generateMap(params)
+    const name = params.shape === '1d' ? `1D ×${params.w}`
+               : params.shape === '2d' ? `2D ${params.w}×${params.h}`
+               :                          `3D ${params.w}×${params.h}×${params.d}`
+    applyMapParsed(parsed, { kind: 'generated', value: JSON.stringify(params), name })
+  } catch (err) { showError(err) }
 }
 
 function rebuildIfReady() {

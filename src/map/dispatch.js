@@ -41,6 +41,7 @@ export function selectRenderFnInfo(dim, exports) {
 //   auto: if any z is non-zero → 3D, else 2D; pixelCount==1 → 1D
 export function detectDim(map, forced) {
   if (forced === 1 || forced === 2 || forced === 3) return forced
+  if (map.dimHint === 1) return 1
   if (map.dimHint === 2) return 2
   // dimHint was 3 by source — confirm with actual data
   const { coords, pixelCount } = map

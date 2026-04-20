@@ -48,7 +48,7 @@
         <button data-tab="path">Path</button>
       </div>
       <div class="tabpanel" data-panel="pattern-file">
-        <input type="file" id="patternFile" accept=".js,text/javascript" />
+        <input type="file" id="patternFile" accept=".js,.epe,text/javascript,application/json" />
       </div>
       <div class="tabpanel hidden" data-panel="pattern-paste">
         <textarea id="patternPaste" placeholder="// paste Pixelblaze pattern JS"></textarea>
@@ -69,6 +69,7 @@
         <button data-tab="paste">Paste</button>
         <button data-tab="url">URL</button>
         <button data-tab="path">Path</button>
+        <button data-tab="gen">Gen</button>
       </div>
       <div class="tabpanel" data-panel="map-file">
         <input type="file" id="mapFile" accept=".csv,.json,.js,text/*" />
@@ -84,6 +85,17 @@
       <div class="tabpanel hidden" data-panel="map-path">
         <input type="text" id="mapPath" placeholder="/pb/pattern_maker/maps/egg_mapping/led_map_3d.csv" />
         <button id="mapPathLoad">Load</button>
+      </div>
+      <div class="tabpanel hidden" data-panel="map-gen">
+        <select id="mapGenShape">
+          <option value="1d">1D</option>
+          <option value="2d" selected>2D</option>
+          <option value="3d">3D</option>
+        </select>
+        <input type="number" id="mapGenW" min="1" max="256" value="16" title="Width / count" />
+        <input type="number" id="mapGenH" min="1" max="256" value="16" title="Height" />
+        <input type="number" id="mapGenD" min="1" max="64" value="8" title="Depth" />
+        <button id="mapGenLoad">Generate</button>
       </div>
 
       <h3>Options</h3>
@@ -125,7 +137,7 @@
         <li><kbd>L</kbd> toggle loader panel</li>
         <li><kbd>?</kbd> toggle this help</li>
       </ul>
-      <p>Drop <code>.js</code> for a pattern, <code>.csv</code>/<code>.json</code> for a map.</p>
+      <p>Drop <code>.js</code> or <code>.epe</code> for a pattern, <code>.csv</code>/<code>.json</code> for a map.</p>
     </div>
     <div id="dropTarget" class="hidden">Drop to load</div>
 

@@ -57,6 +57,8 @@ html, body { margin: 0; padding: 0; height: 100%; background: #000; color: #ddd;
 .tabpanel.hidden { display: none; }
 .tabpanel { display: flex; gap: 4px; align-items: flex-start; }
 .tabpanel input[type=text], .tabpanel input[type=file] { flex: 1; background: #111; color: #ddd; border: 1px solid #333; border-radius: 4px; padding: 4px 6px; font: inherit; }
+.tabpanel input[type=number] { width: 64px; background: #111; color: #ddd; border: 1px solid #333; border-radius: 4px; padding: 4px 6px; font: inherit; }
+.tabpanel select { background: #111; color: #ddd; border: 1px solid #333; border-radius: 4px; padding: 4px 6px; font: inherit; }
 .tabpanel textarea { flex: 1; min-height: 120px; background: #111; color: #ddd; border: 1px solid #333; border-radius: 4px; padding: 6px; font: 12px/1.4 ui-monospace, Menlo, monospace; resize: vertical; }
 .tabpanel button { background: #2a2a2a; color: #ddd; border: 1px solid #444; border-radius: 4px; padding: 4px 10px; cursor: pointer; font: inherit; }
 .tabpanel button:hover { background: #3a3a3a; }
