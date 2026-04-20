@@ -7,6 +7,8 @@ import { buildControlPanel } from './controls.js'
 import { createPaletteStrip } from './palette.js'
 import { createInspector } from './inspector.js'
 import { unwrapPatternText } from './epe.js'
+import { createWatcher } from './watcher.js'
+import { createBrowser } from './browser.js'
 
 // ---------- DOM refs ----------
 const canvas = document.getElementById('stage')
@@ -37,11 +39,12 @@ let state = {
     normalizeMode: 'fill',
     forceDim: undefined,
     swapYZ: false,
-    bloom: true,
+    bloom: false,
     speed: 1,
     ledSize: null,         // null = use pixels.js default
     bloomStrength: 0.55,
-    bloomRadius: 0.2
+    bloomRadius: 0.2,
+    autoReload: true
   },
   running: true,
   vm: null,
@@ -72,6 +75,17 @@ document.getElementById('bloomToggle').checked = state.options.bloom
 document.getElementById('speed').value = String(state.options.speed ?? 1)
 document.getElementById('speedVal').textContent = (state.options.speed ?? 1).toFixed(2) + '\u00D7'
 sceneCtx.setBloomEnabled(state.options.bloom)
+
+// ---------- Watcher (polls path/url descriptors for external edits) ----------
+const watcher = createWatcher()
+const autoReloadEl = document.getElementById('autoReload')
+autoReloadEl.checked = state.options.autoReload !== false
+watcher.setEnabled(autoReloadEl.checked)
+autoReloadEl.addEventListener('change', () => {
+  state.options.autoReload = autoReloadEl.checked
+  watcher.setEnabled(autoReloadEl.checked)
+  persist()
+})
 
 // ---------- Source descriptors + recents ----------
 function descriptorName(d) {
@@ -122,7 +136,9 @@ function renderRecents() {
 // ---------- Error display ----------
 function showError(err) {
   if (!err) { errorsEl.textContent = ''; return }
-  const msg = err instanceof Error ? err.stack || err.message : String(err)
+  const msg = err instanceof Error
+    ? (err.stack && err.stack.includes(err.message) ? err.stack : `${err.message}\n${err.stack || ''}`)
+    : String(err)
   errorsEl.textContent = msg
   console.error(err)
 }
@@ -158,7 +174,12 @@ function readFile(file) {
 async function fetchText(url) {
   const r = await fetch(url)
   if (!r.ok) throw new Error(`fetch ${url} — ${r.status}`)
-  return await r.text()
+  const text = await r.text()
+  const ct = r.headers.get('content-type') || ''
+  if (ct.includes('text/html') || /^\s*<!doctype html/i.test(text)) {
+    throw new Error(`fetch ${url} — got HTML (likely dev-server SPA fallback for a missing file). Check the path.`)
+  }
+  return text
 }
 
 // Pattern inputs
@@ -176,10 +197,15 @@ document.getElementById('patternUrlLoad').addEventListener('click', async () => 
   try { loadPattern(await fetchText(url), { kind: 'url', value: url }) }
   catch (err) { showError(err) }
 })
-document.getElementById('patternPathLoad').addEventListener('click', async () => {
-  const path = document.getElementById('patternPath').value.trim()
-  try { loadPattern(await fetchText(path), { kind: 'path', value: path }) }
-  catch (err) { showError(err) }
+createBrowser({
+  container: document.getElementById('patternBrowser'),
+  kind: 'pattern',
+  filter: (name) => /\.(js|epe)$/i.test(name),
+  emptyMessage: 'No .js or .epe files here.',
+  onPick: async (url, { name }) => {
+    try { loadPattern(await fetchText(url), { kind: 'path', value: url, name }) }
+    catch (err) { showError(err) }
+  }
 })
 
 // Map inputs
@@ -197,10 +223,15 @@ document.getElementById('mapUrlLoad').addEventListener('click', async () => {
   try { loadMap(await fetchText(url), { kind: 'url', value: url }) }
   catch (err) { showError(err) }
 })
-document.getElementById('mapPathLoad').addEventListener('click', async () => {
-  const path = document.getElementById('mapPath').value.trim()
-  try { loadMap(await fetchText(path), { kind: 'path', value: path }) }
-  catch (err) { showError(err) }
+createBrowser({
+  container: document.getElementById('mapBrowser'),
+  kind: 'map',
+  filter: (name) => /\.(csv|json|js)$/i.test(name),
+  emptyMessage: 'No .csv / .json / .js files here.',
+  onPick: async (url, { name }) => {
+    try { loadMap(await fetchText(url), { kind: 'path', value: url, name }) }
+    catch (err) { showError(err) }
+  }
 })
 
 // Map generator
@@ -238,11 +269,18 @@ document.getElementById('swapYZ').addEventListener('change', (e) => {
   state.options.swapYZ = e.target.checked
   persist(); rebuildIfReady()
 })
+function updateBloomSlidersVisible() {
+  const vis = !!state.options.bloom
+  document.getElementById('bloomStrengthLbl').classList.toggle('hidden', !vis)
+  document.getElementById('bloomRadiusLbl').classList.toggle('hidden', !vis)
+}
 document.getElementById('bloomToggle').addEventListener('change', (e) => {
   state.options.bloom = e.target.checked
   sceneCtx.setBloomEnabled(state.options.bloom)
+  updateBloomSlidersVisible()
   persist()
 })
+updateBloomSlidersVisible()
 
 // View preset buttons
 document.querySelectorAll('#viewPresets button').forEach(btn => {
@@ -429,6 +467,7 @@ function loadPattern(text, descriptor) {
     const d = name && !descriptor.name ? { ...descriptor, name } : descriptor
     state.lastPattern = d
     pushRecent('pattern', d)
+    watcher.watch('pattern', d, (fresh) => loadPattern(fresh, d))
   }
   updateReloadButton()
   showLintFindings(lintPattern(source))
@@ -506,6 +545,11 @@ function applyMapParsed(parsed, descriptor) {
   if (descriptor) {
     state.lastMap = descriptor
     pushRecent('map', descriptor)
+    if (descriptor.kind === 'path' || descriptor.kind === 'url') {
+      watcher.watch('map', descriptor, (fresh) => loadMap(fresh, descriptor))
+    } else {
+      watcher.stop('map')
+    }
   }
   persist()
   rebuildIfReady()

@@ -15,8 +15,17 @@ export function loadPattern(source, env) {
   const body = prepareSource(source)
   const keys = Object.keys(env)
   const values = keys.map(k => env[k])
-  const runner = new Function(...keys, body)
+  let runner
+  try {
+    runner = new Function(...keys, body)
+  } catch (err) {
+    throw new Error(`Pattern failed to parse: ${err.message}\nFirst lines:\n${previewLines(source)}`)
+  }
   return runner.apply(Object.create(null), values)
+}
+
+function previewLines(source, n = 5) {
+  return String(source ?? '').split('\n').slice(0, n).map((l, i) => `  ${i + 1}: ${l}`).join('\n')
 }
 
 // Evaluate a Pixelblaze JS map function `function (pixelCount) { ... return map }`.

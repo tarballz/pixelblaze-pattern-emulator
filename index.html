@@ -17,6 +17,7 @@
         <button id="playpause" type="button" title="Space">Pause</button>
         <button id="step" type="button" title="." disabled>Step</button>
         <button id="reload" type="button" title="R" disabled>Reload</button>
+        <label id="autoReloadLbl" title="Auto-reload when the pattern or map file changes (Path/URL loads only)"><input type="checkbox" id="autoReload" /> Auto</label>
         <button id="screenshot" type="button">Shot</button>
         <button id="toggleLoader" type="button" title="L">Load…</button>
         <button id="help" type="button" title="?">?</button>
@@ -59,8 +60,7 @@
         <button id="patternUrlLoad">Fetch</button>
       </div>
       <div class="tabpanel hidden" data-panel="pattern-path">
-        <input type="text" id="patternPath" placeholder="/samples/rainbow.js" />
-        <button id="patternPathLoad">Load</button>
+        <div id="patternBrowser" class="pbb-container"></div>
       </div>
 
       <h3>Pixel Map</h3>
@@ -83,8 +83,7 @@
         <button id="mapUrlLoad">Fetch</button>
       </div>
       <div class="tabpanel hidden" data-panel="map-path">
-        <input type="text" id="mapPath" placeholder="/samples/ring.csv" />
-        <button id="mapPathLoad">Load</button>
+        <div id="mapBrowser" class="pbb-container"></div>
       </div>
       <div class="tabpanel hidden" data-panel="map-gen">
         <select id="mapGenShape">
@@ -114,14 +113,14 @@
         </select>
       </label>
       <label><span>Swap Y/Z</span><input type="checkbox" id="swapYZ" /></label>
-      <label><span>Bloom</span><input type="checkbox" id="bloomToggle" checked /></label>
+      <label><span>Bloom</span><input type="checkbox" id="bloomToggle" /></label>
       <label><span>LED size</span>
         <input type="range" id="ledSize" min="0.005" max="0.12" step="0.001" value="0.03" />
       </label>
-      <label><span>Bloom strength</span>
+      <label id="bloomStrengthLbl"><span>Bloom strength</span>
         <input type="range" id="bloomStrength" min="0" max="2" step="0.05" value="0.55" />
       </label>
-      <label><span>Bloom radius</span>
+      <label id="bloomRadiusLbl"><span>Bloom radius</span>
         <input type="range" id="bloomRadius" min="0" max="1" step="0.02" value="0.2" />
       </label>
 

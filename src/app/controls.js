@@ -8,7 +8,7 @@
 const STORE_KEY = 'pb_emu.controls.v1'
 
 // 32-bit FNV-1a — good enough to key localStorage entries.
-function hashSource(s) {
+export function hashSource(s) {
   let h = 0x811c9dc5
   for (let i = 0; i < s.length; i++) {
     h ^= s.charCodeAt(i)
