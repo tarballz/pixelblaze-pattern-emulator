@@ -33,9 +33,9 @@ The `integration.test.js` `runFrames` helper is the canonical example of wiring 
 - **Transform stack** is tracked in `ctx.transformStack` but not yet multiplied through per-pixel coords. Patterns relying on `translate`/`rotate` will see untransformed coords.
 - **`time()` origin** is `performance.now()` at VM construction, not wall-clock-anchored.
 
-### Vite path aliases
+### Sample assets and the Path loader
 
-`vite.config.js` aliases `/pb` → `~/code/pb` and `/marimapper` → `~/code/marimapper` and adds them to `server.fs.allow`. The "Path" loader tab uses these to load patterns/maps from sibling repos at dev time. Integration tests skip themselves if `~/code/pb/pattern_maker/maps/egg_mapping/led_map_3d.csv` is missing — don't expect them to run on a fresh clone.
+`public/samples/` ships `rainbow.js` and `ring.csv` so a fresh clone has something to load without pulling external resources. Vite serves `public/` at the root, so the Path loader tab reaches them at `/samples/...`. Integration tests read `~/code/pb/pattern_maker/maps/egg_mapping/led_map_3d.csv` directly via `readFileSync` and skip themselves if it's missing — don't expect them to run on a fresh clone.
 
 ## Conventions specific to this repo
 

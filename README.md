@@ -11,6 +11,8 @@ npm run dev
 
 Open <http://localhost:5173>. Use the loader panel to supply a pattern and map. Drag-and-drop onto the canvas also works.
 
+**First time?** In the loader's **Path** tab, type `/samples/rainbow.js` as the pattern and `/samples/ring.csv` as the map, then click **Load** on each. Or open the map's **Gen** tab and generate a 2D grid — no files needed.
+
 ## Inputs
 
 **Pattern** and **map** each accept these input methods:
@@ -18,11 +20,7 @@ Open <http://localhost:5173>. Use the loader panel to supply a pattern and map. 
 1. **File** — pick a pattern (`.js` or `.epe`) or map (`.csv` / `.json`).
 2. **Paste** — paste source text directly.
 3. **URL** — fetch from a URL (GitHub raw, gist, etc.). CORS-limited.
-4. **Path** — in dev mode the Vite server exposes these prefixes:
-   - `/pb/…` → `~/code/pb/…`
-   - `/marimapper/…` → `~/code/marimapper/…`
-
-   E.g. `/pb/pattern_maker/examples/organic/lava_flow.js` as the pattern path and `/pb/pattern_maker/maps/egg_mapping/led_map_3d.csv` as the map path.
+4. **Path** — any path served by the dev server. Bundled samples live under `/samples/` — e.g. `/samples/rainbow.js` and `/samples/ring.csv`. Drop additional files into `public/` and they'll be served at the matching URL.
 5. **Gen** *(map only)* — build a synthetic map without a file: 1D strip of N pixels, 2D grid (W×H), or 3D cube (W×H×D). Ideal for quickly testing a 2D matrix pattern.
 
 Drag a file onto the canvas to load it: `.js` / `.epe` → pattern, `.csv` → map, `.json` → pattern if it parses as an EPE envelope, else map.
