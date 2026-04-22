@@ -69,18 +69,24 @@ export function createPixelCloud(scene, { coords, pixelCount }) {
     sizeAttenuation: true
   })
 
+  // Display gamma applied in the shader. Patterns author in linear [0,1] but a
+  // monitor makes that look crushed in the midtones; gamma < 1 brightens mids
+  // while preserving endpoints. Doing it on the GPU removes ~3 Math.pow per
+  // pixel per frame from the render loop.
+  mat.onBeforeCompile = (shader) => {
+    shader.vertexShader = shader.vertexShader.replace(
+      '#include <color_vertex>',
+      '#include <color_vertex>\n#ifdef USE_COLOR\n  vColor = pow(vColor, vec3(0.55));\n#endif'
+    )
+  }
+
   const points = new THREE.Points(geom, mat)
   scene.add(points)
 
-  // Perceptual display boost: raw pattern values are physically accurate but
-  // look dim on a monitor (dark-blue LEDs near the eye are vivid; 0.2 on screen
-  // isn't). Gamma < 1 brightens midtones while preserving 0→0 and 1→1.
-  const DISPLAY_GAMMA = 0.55
+  // readPixel already clamps rgb to [0,1]; the shader applies display gamma.
+  // This is a hot path: a typed-array copy is materially cheaper than a JS loop.
   function setColors(rgb) {
-    for (let i = 0; i < rgb.length; i++) {
-      const v = rgb[i]
-      colors[i] = v <= 0 ? 0 : v >= 1 ? 1 : Math.pow(v, DISPLAY_GAMMA)
-    }
+    colors.set(rgb)
     geom.attributes.color.needsUpdate = true
   }
 

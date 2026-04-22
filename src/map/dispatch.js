@@ -20,18 +20,20 @@ export function selectRenderFn(dim, exports) {
 export function selectRenderFnInfo(dim, exports) {
   const { render, render2D, render3D } = exports
 
+  // `raw` + `kind` let the host inline the per-pixel call site (no arrow-fn
+  // indirection in the hot loop). `fn` is kept for existing callers/tests.
   if (dim === 3) {
-    if (render3D) return { fn: (i, nx, ny, nz) => render3D(i, nx[i], ny[i], nz[i]), picked: 'render3D' }
-    if (render2D) return { fn: (i, nx, ny)     => render2D(i, nx[i], ny[i]),        picked: 'render2D (z dropped)' }
-    if (render)   return { fn: (i)             => render(i),                        picked: 'render (index only)' }
+    if (render3D) return { fn: (i, nx, ny, nz) => render3D(i, nx[i], ny[i], nz[i]), picked: 'render3D',            kind: '3d',      raw: render3D }
+    if (render2D) return { fn: (i, nx, ny)     => render2D(i, nx[i], ny[i]),        picked: 'render2D (z dropped)', kind: '2d',      raw: render2D }
+    if (render)   return { fn: (i)             => render(i),                        picked: 'render (index only)',  kind: 'index',   raw: render }
   } else if (dim === 2) {
-    if (render2D) return { fn: (i, nx, ny)     => render2D(i, nx[i], ny[i]),        picked: 'render2D' }
-    if (render3D) return { fn: (i, nx, ny)     => render3D(i, nx[i], ny[i], 0.5),   picked: 'render3D (z=0.5)' }
-    if (render)   return { fn: (i)             => render(i),                        picked: 'render (index only)' }
+    if (render2D) return { fn: (i, nx, ny)     => render2D(i, nx[i], ny[i]),        picked: 'render2D',             kind: '2d',      raw: render2D }
+    if (render3D) return { fn: (i, nx, ny)     => render3D(i, nx[i], ny[i], 0.5),   picked: 'render3D (z=0.5)',     kind: '2d-as-3d',raw: render3D }
+    if (render)   return { fn: (i)             => render(i),                        picked: 'render (index only)',  kind: 'index',   raw: render }
   } else {
-    if (render)   return { fn: (i)                       => render(i),              picked: 'render' }
-    if (render2D) return { fn: (i, _nx, _ny, _nz, pc)    => render2D(i, i / pc, 0.5), picked: 'render2D (x=i/pc)' }
-    if (render3D) return { fn: (i, _nx, _ny, _nz, pc)    => render3D(i, i / pc, 0.5, 0.5), picked: 'render3D (x=i/pc)' }
+    if (render)   return { fn: (i)                       => render(i),              picked: 'render',               kind: 'index',   raw: render }
+    if (render2D) return { fn: (i, _nx, _ny, _nz, pc)    => render2D(i, i / pc, 0.5), picked: 'render2D (x=i/pc)',  kind: '1d-as-2d',raw: render2D }
+    if (render3D) return { fn: (i, _nx, _ny, _nz, pc)    => render3D(i, i / pc, 0.5, 0.5), picked: 'render3D (x=i/pc)', kind: '1d-as-3d', raw: render3D }
   }
 
   throw new Error('pattern has no render function')

@@ -445,15 +445,18 @@ document.getElementById('mapGenLoad').addEventListener('click', () => {
 // Options
 document.getElementById('normalizeMode').addEventListener('change', (e) => {
   state.options.normalizeMode = e.target.value
+  state.preparedMap = null
   persist(); rebuildIfReady()
 })
 document.getElementById('forceDim').addEventListener('change', (e) => {
   const v = e.target.value
   state.options.forceDim = v === 'auto' ? undefined : parseInt(v, 10)
+  state.preparedMap = null
   rebuildIfReady()
 })
 document.getElementById('swapYZ').addEventListener('change', (e) => {
   state.options.swapYZ = e.target.checked
+  state.preparedMap = null
   persist(); rebuildIfReady()
 })
 function updateBloomSlidersVisible() {
@@ -466,12 +469,13 @@ document.getElementById('bloomToggle').addEventListener('change', (e) => {
   sceneCtx.setBloomEnabled(state.options.bloom)
   updateBloomSlidersVisible()
   persist()
+  markDirty()
 })
 updateBloomSlidersVisible()
 
 // View preset buttons
 document.querySelectorAll('#viewPresets button').forEach(btn => {
-  btn.addEventListener('click', () => sceneCtx.setView(btn.dataset.view))
+  btn.addEventListener('click', () => { sceneCtx.setView(btn.dataset.view); markDirty() })
 })
 
 // Live visual tuning
@@ -487,18 +491,21 @@ ledSizeInput.addEventListener('input', () => {
   state.options.ledSize = v
   if (state.pixelCloud) state.pixelCloud.setSize(v)
   persist()
+  markDirty()
 })
 bloomStrengthInput.addEventListener('input', () => {
   const v = parseFloat(bloomStrengthInput.value)
   state.options.bloomStrength = v
   sceneCtx.setBloom({ strength: v })
   persist()
+  markDirty()
 })
 bloomRadiusInput.addEventListener('input', () => {
   const v = parseFloat(bloomRadiusInput.value)
   state.options.bloomRadius = v
   sceneCtx.setBloom({ radius: v })
   persist()
+  markDirty()
 })
 
 // Apply stored bloom values on startup so sliders aren't out of sync with the scene.
@@ -682,7 +689,7 @@ function loadPattern(text, descriptor, { previousValues, fromEditor = false } = 
   updateReloadButton()
   showLintFindings(lintPattern(source))
   persist()
-  rebuildIfReady({ previousValues })
+  rebuildIfReady({ previousValues, patternOnly: true })
 }
 
 async function reloadPattern() {
@@ -765,6 +772,7 @@ function loadMap(text, descriptor) {
 function applyMapParsed(parsed, descriptor) {
   showError(null)
   state.mapParsed = parsed
+  state.preparedMap = null  // map changed → force re-prepare
   state.needsFit = true
   if (descriptor) {
     state.lastMap = descriptor
@@ -789,32 +797,41 @@ function loadGeneratedMap(params) {
   } catch (err) { showError(err) }
 }
 
-function rebuildIfReady({ previousValues } = {}) {
+function rebuildIfReady({ previousValues, patternOnly = false } = {}) {
   if (!state.patternSource || !state.mapParsed) return
-  try { rebuild({ previousValues }) } catch (err) { showError(err) }
+  try { rebuild({ previousValues, patternOnly }) } catch (err) { showError(err) }
 }
 
-function rebuild({ previousValues } = {}) {
-  const prepared = prepareMap(state.mapParsed, state.options)
-  const { pixelCount, coords, dim, normalized } = prepared
+function rebuild({ previousValues, patternOnly = false } = {}) {
+  // Pattern-only edits (editor keystrokes, pattern reloads) can reuse the
+  // prepared map + pixel cloud + rgb buffer. Map / option changes rerun the
+  // full path. First-ever build always runs full path because preparedMap is null.
+  let prepared = state.preparedMap
+  if (!patternOnly || !prepared) {
+    prepared = prepareMap(state.mapParsed, state.options)
+    const { pixelCount, coords } = prepared
 
-  // Replace pixel cloud
-  if (state.pixelCloud) state.pixelCloud.dispose()
-  state.pixelCloud = createPixelCloud(sceneCtx.scene, { coords, pixelCount })
+    if (state.pixelCloud) state.pixelCloud.dispose()
+    state.pixelCloud = createPixelCloud(sceneCtx.scene, { coords, pixelCount })
 
-  // Auto-fit only when the map changes — pattern-only reloads keep the camera.
-  if (state.needsFit) {
-    sceneCtx.fitTo([0, 0, 0], Math.sqrt(3))
-    state.needsFit = false
+    // Auto-fit only when the map changes — pattern-only reloads keep the camera.
+    if (state.needsFit) {
+      sceneCtx.fitTo([0, 0, 0], Math.sqrt(3))
+      state.needsFit = false
+    }
+
+    state.rgb = new Float32Array(pixelCount * 3)
+    state.preparedMap = prepared
   }
+  const { pixelCount, dim } = prepared
 
-  // Build VM
+  // Build VM (pattern source or map dim may have changed)
   state.vm = createVM({ source: state.patternSource, pixelCount, mapDim: dim })
   state.vm.ctx.speed = state.options.speed ?? 1
   const info = selectRenderFnInfo(dim, state.vm.classified)
   state.chosenRender = info.fn
-  state.rgb = new Float32Array(pixelCount * 3)
-  state.preparedMap = prepared
+  state.chosenRenderRaw = info.raw
+  state.chosenRenderKind = info.kind
 
   // Build the control panel — this replaces applyControlDefaults' single
   // default invocation with live widgets, each setting its own initial value.
@@ -829,23 +846,43 @@ function rebuild({ previousValues } = {}) {
   // A fresh VM earns a fresh chance — re-arm the render loop.
   state.running = true
   playPauseBtn.textContent = 'Pause'
+  markDirty()
 }
 
 // ---------- Render loop ----------
 function runOnePatternFrame(realDeltaMs) {
-  if (!state.vm || !state.chosenRender) return
+  if (!state.vm || !state.chosenRenderRaw) return
   try {
     const { nx, ny, nz } = state.preparedMap.normalized
     const pc = state.preparedMap.pixelCount
     const rgb = state.rgb
     const vm = state.vm
-    const chosen = state.chosenRender
+    const fn = state.chosenRenderRaw
+    const kind = state.chosenRenderKind
+    const reset = vm.resetPixel
+    const read = vm.readPixel
 
     vm.beforeRender(realDeltaMs)
-    for (let i = 0; i < pc; i++) {
-      vm.resetPixel()
-      chosen(i, nx, ny, nz, pc)
-      vm.readPixel(rgb, i)
+    // Branch once on dispatch kind to keep per-pixel call sites monomorphic.
+    switch (kind) {
+      case '3d':
+        for (let i = 0; i < pc; i++) { reset(); fn(i, nx[i], ny[i], nz[i]); read(rgb, i) }
+        break
+      case '2d':
+        for (let i = 0; i < pc; i++) { reset(); fn(i, nx[i], ny[i]); read(rgb, i) }
+        break
+      case '2d-as-3d':
+        for (let i = 0; i < pc; i++) { reset(); fn(i, nx[i], ny[i], 0.5); read(rgb, i) }
+        break
+      case '1d-as-2d':
+        for (let i = 0; i < pc; i++) { reset(); fn(i, i / pc, 0.5); read(rgb, i) }
+        break
+      case '1d-as-3d':
+        for (let i = 0; i < pc; i++) { reset(); fn(i, i / pc, 0.5, 0.5); read(rgb, i) }
+        break
+      case 'index':
+      default:
+        for (let i = 0; i < pc; i++) { reset(); fn(i); read(rgb, i) }
     }
     state.pixelCloud.setColors(rgb)
   } catch (err) {
@@ -856,6 +893,12 @@ function runOnePatternFrame(realDeltaMs) {
 }
 
 let lastFrameWall = performance.now()
+let sceneDirty = true
+function markDirty() { sceneDirty = true }
+// Anything a user can poke that affects the rendered frame feeds into this flag.
+sceneCtx.controls.addEventListener('change', markDirty)
+window.addEventListener('resize', markDirty)
+
 function frame() {
   requestAnimationFrame(frame)
 
@@ -863,9 +906,12 @@ function frame() {
   const realDelta = wall - lastFrameWall
   lastFrameWall = wall
 
-  if (state.running) runOnePatternFrame(realDelta)
-  paletteStrip.draw()
-  sceneCtx.render()
+  if (state.running) { runOnePatternFrame(realDelta); sceneDirty = true }
+  if (sceneDirty) {
+    paletteStrip.draw()
+    sceneCtx.render()
+    sceneDirty = false
+  }
 }
 requestAnimationFrame(frame)
 

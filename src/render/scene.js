@@ -111,14 +111,20 @@ export function createScene(canvas) {
     if (radius != null) bloom.radius = radius
   }
 
+  let bloomOn = false
   return {
     renderer, scene, camera, controls, composer, bloom,
     render() {
       controls.update()
-      composer.render()
+      // When bloom is off, the composer's RenderPass + BloomPass dispatch is
+      // pure overhead (a full-screen pass that does nothing useful). Skip the
+      // composer entirely and draw the scene direct to the canvas.
+      if (bloomOn) composer.render()
+      else renderer.render(scene, camera)
     },
     setBloomEnabled(on) {
-      bloom.enabled = !!on
+      bloomOn = !!on
+      bloom.enabled = bloomOn
     },
     fitTo,
     setView,

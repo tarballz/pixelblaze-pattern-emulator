@@ -26,7 +26,7 @@ import { indentWithTab } from '@codemirror/commands'
 // can distinguish them from user typing.
 const fromHost = Annotation.define()
 
-export function createEditor({ parent, onChange, onSave, debounceMs = 200 }) {
+export function createEditor({ parent, onChange, onSave, debounceMs = 350 }) {
   let lintDiags = []
   let runtimeDiag = null
   let debounceTimer = null

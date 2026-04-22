@@ -102,8 +102,20 @@ export function paint(value, brightness = 1) {
     hsv(value, 1, brightness)
     return
   }
-  const [r, g, b] = samplePalette(p, frac(value))
-  state.r = r * brightness
-  state.g = g * brightness
-  state.b = b * brightness
+  // Inlined samplePalette — called per pixel per frame, so a returned
+  // [r,g,b] array would churn GC. Same algorithm, no allocation.
+  const v = value - Math.floor(value)
+  const entries = (p.length / 4) | 0
+  let loIdx = 0
+  for (let i = 0; i < entries - 1; i++) {
+    if (v >= p[i * 4] && v <= p[(i + 1) * 4]) { loIdx = i; break }
+    if (v > p[(i + 1) * 4]) loIdx = i + 1
+  }
+  const loP = loIdx * 4
+  const hiP = Math.min((loIdx + 1) * 4, (entries - 1) * 4)
+  const lo = p[loP], hi = p[hiP]
+  const t = hi > lo ? (v - lo) / (hi - lo) : 0
+  state.r = (p[loP + 1] + (p[hiP + 1] - p[loP + 1]) * t) * brightness
+  state.g = (p[loP + 2] + (p[hiP + 2] - p[loP + 2]) * t) * brightness
+  state.b = (p[loP + 3] + (p[hiP + 3] - p[loP + 3]) * t) * brightness
 }

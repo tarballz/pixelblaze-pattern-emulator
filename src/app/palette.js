@@ -1,14 +1,17 @@
 // Live palette strip: polls getPalette() each frame and resamples it into a
-// 256-wide canvas so the user can see the gradient driving paint(). Hidden
+// full-height canvas so the user can see the gradient driving paint(). Hidden
 // whenever the pattern hasn't called setPalette.
 
-import { getPalette, samplePalette } from '../vm/currentPixel.js'
+import { getPalette } from '../vm/currentPixel.js'
 
 export function createPaletteStrip(canvas) {
   const ctx = canvas.getContext('2d')
   const w = canvas.width
   const h = canvas.height
-  const image = ctx.createImageData(w, 1)
+  // One full-height ImageData + one row's worth of RGBA values pre-alpha'd
+  // means we can sample once per column and memcpy the row down y-axis.
+  const image = ctx.createImageData(w, h)
+  const rowRGBA = new Uint8ClampedArray(w * 4)
 
   function draw() {
     const p = getPalette()
@@ -17,17 +20,34 @@ export function createPaletteStrip(canvas) {
       return
     }
     canvas.classList.remove('hidden')
-    const data = image.data
+
+    // Inlined palette sampling — avoids the [r,g,b] allocation that
+    // samplePalette() returns for every column.
+    const entries = (p.length / 4) | 0
     for (let x = 0; x < w; x++) {
-      const [r, g, b] = samplePalette(p, x / (w - 1))
+      const v = x / (w - 1)
+      let loIdx = 0
+      for (let i = 0; i < entries - 1; i++) {
+        if (v >= p[i * 4] && v <= p[(i + 1) * 4]) { loIdx = i; break }
+        if (v > p[(i + 1) * 4]) loIdx = i + 1
+      }
+      const loP = loIdx * 4
+      const hiP = Math.min((loIdx + 1) * 4, (entries - 1) * 4)
+      const lo = p[loP], hi = p[hiP]
+      const t = hi > lo ? (v - lo) / (hi - lo) : 0
+      const r = p[loP + 1] + (p[hiP + 1] - p[loP + 1]) * t
+      const g = p[loP + 2] + (p[hiP + 2] - p[loP + 2]) * t
+      const b = p[loP + 3] + (p[hiP + 3] - p[loP + 3]) * t
       const o = x * 4
-      data[o]     = clamp255(r)
-      data[o + 1] = clamp255(g)
-      data[o + 2] = clamp255(b)
-      data[o + 3] = 255
+      rowRGBA[o]     = clamp255(r)
+      rowRGBA[o + 1] = clamp255(g)
+      rowRGBA[o + 2] = clamp255(b)
+      rowRGBA[o + 3] = 255
     }
-    // Tile the 1-pixel-high image up to the full canvas height.
-    for (let y = 0; y < h; y++) ctx.putImageData(image, 0, y)
+    // Tile the row into the full-height buffer, then one putImageData.
+    const data = image.data
+    for (let y = 0; y < h; y++) data.set(rowRGBA, y * w * 4)
+    ctx.putImageData(image, 0, 0)
   }
 
   return { draw }
