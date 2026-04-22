@@ -79,6 +79,11 @@ export function createPixelCloud(scene, { coords, pixelCount }) {
       '#include <color_vertex>\n#ifdef USE_COLOR\n  vColor = pow(vColor, vec3(0.55));\n#endif'
     )
   }
+  // Without this, Three.js treats every onBeforeCompile'd material as a unique
+  // shader signature and accumulates entries in WebGLPrograms across every
+  // pixel-cloud rebuild. A constant key lets the compiled program be reused
+  // forever — bounded to one program instead of N-per-session.
+  mat.customProgramCacheKey = () => 'pb_emu.pixelCloud.gamma55'
 
   const points = new THREE.Points(geom, mat)
   scene.add(points)

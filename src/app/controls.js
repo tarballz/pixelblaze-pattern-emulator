@@ -26,8 +26,28 @@ export function hashSource(s) {
 function loadStore() {
   try { return JSON.parse(localStorage.getItem(STORE_KEY) || '{}') } catch { return {} }
 }
+
+// Debounced write: slider drags fire `input` at frame rate, and a synchronous
+// JSON.stringify + localStorage.setItem on every tick blocks the main thread
+// (noticeably on large stores). Coalesce to one write per idle window; flush
+// on tab hide / unload so nothing is lost.
+let pendingStore = null
+let storeWriteTimer = null
+const STORE_WRITE_DELAY_MS = 250
 function saveStore(store) {
-  try { localStorage.setItem(STORE_KEY, JSON.stringify(store)) } catch {}
+  pendingStore = store
+  if (storeWriteTimer) return
+  storeWriteTimer = setTimeout(flushStore, STORE_WRITE_DELAY_MS)
+}
+function flushStore() {
+  if (storeWriteTimer) { clearTimeout(storeWriteTimer); storeWriteTimer = null }
+  if (pendingStore === null) return
+  try { localStorage.setItem(STORE_KEY, JSON.stringify(pendingStore)) } catch {}
+  pendingStore = null
+}
+if (typeof window !== 'undefined') {
+  window.addEventListener('pagehide', flushStore)
+  window.addEventListener('beforeunload', flushStore)
 }
 
 // Build a panel inside `container` for every control in `controls` (from

@@ -637,7 +637,17 @@ speedInput.addEventListener('input', () => {
 })
 
 // ---------- Persistence ----------
+// Option sliders (ledSize, bloomStrength, bloomRadius, speed) fire input events
+// at frame rate during drag; a sync localStorage.setItem on each one blocks the
+// main thread. Coalesce to one write per idle window, flush on hide/unload.
+let persistTimer = null
+const PERSIST_DELAY_MS = 250
 function persist() {
+  if (persistTimer) return
+  persistTimer = setTimeout(flushPersist, PERSIST_DELAY_MS)
+}
+function flushPersist() {
+  if (persistTimer) { clearTimeout(persistTimer); persistTimer = null }
   try {
     localStorage.setItem('pb_emu.v1', JSON.stringify({
       mapText: document.getElementById('mapPaste').value,
@@ -647,6 +657,8 @@ function persist() {
     }))
   } catch {}
 }
+window.addEventListener('pagehide', flushPersist)
+window.addEventListener('beforeunload', flushPersist)
 
 // ---------- Load flow ----------
 // `fromEditor` distinguishes in-browser typing (no Recents, no editor.setDoc,
