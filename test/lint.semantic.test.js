@@ -129,6 +129,11 @@ describe('semantic lint rules', () => {
     expect(f.message).toMatch(/at most 1/)
   })
 
+  it('does not flag 3-arg hsv24 (regression: catalog said arity 1)', () => {
+    const src = `export function render(i) { hsv24(i, 1, 1) }`
+    expect(lintPattern(src).some(f => /Call to built-in 'hsv24'/.test(f.message))).toBe(false)
+  })
+
   it('tolerates variadic built-ins (max/min/hypot)', () => {
     const src = `export function render(i) { hsv(max(0.1, 0.2, 0.3, 0.4), 1, 1) }`
     expect(lintPattern(src).some(f => /Call to built-in 'max'/.test(f.message))).toBe(false)

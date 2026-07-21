@@ -28,14 +28,14 @@ The `integration.test.js` `runFrames` helper is the canonical example of wiring 
 ### Key invariants and gotchas
 
 - **The pattern intentionally executes user JS.** `sandbox.js` runs in strict mode with an empty `this` and no `window`/`fetch`/`document`, but it is *not* a security boundary — it's a same-origin sandbox to keep pattern globals from leaking. Don't add "safety" features that break legitimate pattern semantics.
-- **Float64, not 16.16 fixed-point.** Patterns that deliberately overflow at ±32768 will diverge from real hardware. This is documented and intentional.
+- **Float64 by default, with opt-in Q16.16 bitwise mode.** Arithmetic is float64; patterns that deliberately overflow at ±32768 in *arithmetic* will diverge from hardware (documented and intentional). Bitwise ops, however, can opt into hardware raw-word semantics — a `// @fixedpoint` pragma (or the UI "16.16 bit ops" option) routes `<< >> >>> & | ^ ~` through `__pb*` helpers via a Lezer source transform (`src/vm/fixedpoint.js`). Every Q16.16 value is exactly representable in float64, so this makes bit-packing patterns (e.g. slime_mold.js) hardware-correct without a full fixed-point interpreter.
 - **Control widgets are stubbed** at MVP defaults (slider 0.5, hsvPicker white/red, toggle off). Tests assert against those defaults — see the `solid_color` / `lava_flow` integration cases.
 - **Transform stack** is tracked in `ctx.transformStack` but not yet multiplied through per-pixel coords. Patterns relying on `translate`/`rotate` will see untransformed coords.
 - **`time()` origin** is `performance.now()` at VM construction, not wall-clock-anchored.
 
 ### Sample assets and the Path loader
 
-`public/samples/` ships `rainbow.js` and `ring.csv` so a fresh clone has something to load without pulling external resources. Vite serves `public/` at the root, so the Path loader tab reaches them at `/samples/...`. Integration tests read `~/code/pb/pattern_maker/maps/egg_mapping/led_map_3d.csv` directly via `readFileSync` and skip themselves if it's missing — don't expect them to run on a fresh clone.
+`public/samples/` ships `rainbow.js` and `ring.csv` so a fresh clone has something to load without pulling external resources. Vite serves `public/` at the root, so the Path loader tab reaches them at `/samples/...`. Integration tests read `~/code/pb_pattern_maker/pattern_maker/maps/egg_mapping/led_map_3d.csv` directly via `readFileSync` and skip themselves if it's missing — don't expect them to run on a fresh clone. Point `PB_ROOT` at a different checkout to override the location.
 
 ## Conventions specific to this repo
 

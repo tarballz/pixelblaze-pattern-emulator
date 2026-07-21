@@ -15,8 +15,63 @@ function coerceIndex(prop) {
   if (FRACTIONAL_INDEX.test(prop)) return String(Math.trunc(Number(prop)))
   return prop
 }
+// Shared implementations for Pixelblaze array operations. Used by both the
+// functional builtins (arrayMutate(a, fn)) and the method forms on array(n)
+// proxies (a.mutate(fn)) — hardware supports both spellings. Note hardware
+// sorts IN PLACE (std::sort) and numerically ascending by default; JS's native
+// Array#sort is lexicographic, so `sort` must be intercepted, not inherited.
+function pbForEach(a, fn) { for (let i = 0; i < a.length; i++) fn(a[i], i, a) }
+function pbMapTo(src, dst, fn) { for (let i = 0; i < src.length; i++) dst[i] = fn(src[i], i, src) }
+function pbMutate(a, fn) { for (let i = 0; i < a.length; i++) a[i] = fn(a[i], i, a) }
+function pbReduce(a, fn, init) {
+  let acc = init
+  for (let i = 0; i < a.length; i++) acc = fn(acc, a[i], i, a)
+  return acc
+}
+function pbReplace(dst, src) { for (let i = 0; i < src.length; i++) dst[i] = src[i]; return dst }
+function pbReplaceAt(dst, at, src) { for (let i = 0; i < src.length; i++) dst[at + i] = src[i]; return dst }
+function pbSort(a, cmp) {
+  Array.prototype.sort.call(a, cmp || ((x, y) => x - y))
+  return a
+}
+function pbSortBy(a, key) {
+  Array.prototype.sort.call(a, (x, y) => key(x) - key(y))
+  return a
+}
+function pbSum(a) { let s = 0; for (let i = 0; i < a.length; i++) s += a[i]; return s }
+
+// Method forms are only available on array(n) allocations (the Proxy), not on
+// array literals — literals keep native JS methods. The user-facing production
+// patterns only call methods on array(n) arrays, matching hardware idiom.
+// Bound methods are cached per underlying array so hot render loops
+// (e.g. matches.sort() per frame) don't allocate a closure per call.
+const methodCache = new WeakMap()
+function pbArrayMethods(target) {
+  let m = methodCache.get(target)
+  if (!m) {
+    m = {
+      __proto__: null,
+      forEach: (fn) => pbForEach(target, fn),
+      mapTo: (dst, fn) => pbMapTo(target, dst, fn),
+      mutate: (fn) => pbMutate(target, fn),
+      reduce: (fn, init) => pbReduce(target, fn, init),
+      replace: (src) => pbReplace(target, src),
+      replaceAt: (at, src) => pbReplaceAt(target, at, src),
+      sort: (cmp) => pbSort(target, cmp),
+      sortBy: (key) => pbSortBy(target, key),
+      sum: () => pbSum(target)
+    }
+    methodCache.set(target, m)
+  }
+  return m
+}
+
 const pbArrayHandler = {
   get(target, prop, receiver) {
+    if (typeof prop === 'string') {
+      const methods = pbArrayMethods(target)
+      if (prop in methods) return methods[prop]
+    }
     return Reflect.get(target, coerceIndex(prop), receiver)
   },
   set(target, prop, value, receiver) {
@@ -141,23 +196,19 @@ export function createBuiltins(ctx) {
   // evaluates to undefined. Wrap a plain Array in a Proxy that floors
   // numeric-looking index strings on both get and set.
   env.array = (n) => makePbArray(n | 0)
-  // Note: patterns may use both method-form (a.length, a.forEach) and functional form.
-  // The method form works natively on Array and (for some methods) Float64Array.
-  // Provide the functional aliases.
+  // Note: patterns may use both method-form (a.mutate, a.sort — intercepted by
+  // the array(n) Proxy above) and functional form. Both share one impl set.
   env.arrayLength = (a) => a.length
-  env.arrayForEach = (a, fn) => { for (let i = 0; i < a.length; i++) fn(a[i], i, a) }
-  env.arrayMapTo = (src, dst, fn) => { for (let i = 0; i < src.length; i++) dst[i] = fn(src[i], i, src) }
-  env.arrayMutate = (a, fn) => { for (let i = 0; i < a.length; i++) a[i] = fn(a[i], i, a) }
-  env.arrayReduce = (a, fn, init) => {
-    let acc = init
-    for (let i = 0; i < a.length; i++) acc = fn(acc, a[i], i, a)
-    return acc
-  }
-  env.arrayReplace = (dst, src) => { for (let i = 0; i < src.length; i++) dst[i] = src[i]; return dst }
-  env.arrayReplaceAt = (dst, at, src) => { for (let i = 0; i < src.length; i++) dst[at + i] = src[i]; return dst }
-  env.arraySort = (a, cmp) => cmp ? Array.from(a).sort(cmp) : Array.from(a).sort((x, y) => x - y)
-  env.arraySortBy = (a, key) => Array.from(a).sort((x, y) => key(x) - key(y))
-  env.arraySum = (a) => { let s = 0; for (let i = 0; i < a.length; i++) s += a[i]; return s }
+  env.arrayForEach = pbForEach
+  env.arrayMapTo = pbMapTo
+  env.arrayMutate = pbMutate
+  env.arrayReduce = pbReduce
+  env.arrayReplace = pbReplace
+  env.arrayReplaceAt = pbReplaceAt
+  // In place, like hardware (std::sort) — NOT a sorted copy.
+  env.arraySort = pbSort
+  env.arraySortBy = pbSortBy
+  env.arraySum = pbSum
 
   // -------- Transform stack (4×4 matrices, up to 31 deep) --------
   // Applied to (x, y, z) before the render function sees them.
@@ -191,7 +242,29 @@ export function createBuiltins(ctx) {
   env.pixelMapDimensions = () => ctx.mapDim
   env.has2DMap = () => ctx.mapDim >= 2 ? 1 : 0
   env.has3DMap = () => ctx.mapDim >= 3 ? 1 : 0
-  env.mapPixels = (fn) => { /* would remap at load; no-op for MVP */ }
+  // Iterate the coordinate map, calling fn once per pixel with the same
+  // normalized coords the render functions receive. Read-only v1: hardware may
+  // support remapping via the callback's return value, but that behavior is
+  // unverified, so we warn once instead of guessing.
+  let mapPixelsWarned = false
+  env.mapPixels = (fn) => {
+    if (typeof fn !== 'function') return
+    const c = ctx.mapCoords
+    const pc = env.pixelCount
+    if (!c || ctx.mapDim < 2) {
+      for (let i = 0; i < pc; i++) fn(i, i / pc)
+    } else if (ctx.mapDim === 3) {
+      for (let i = 0; i < pc; i++) {
+        const r = fn(i, c.nx[i], c.ny[i], c.nz[i])
+        if (r !== undefined && !mapPixelsWarned) {
+          mapPixelsWarned = true
+          console.warn('mapPixels: callback return values are ignored (coordinate remap not implemented)')
+        }
+      }
+    } else {
+      for (let i = 0; i < pc; i++) fn(i, c.nx[i], c.ny[i])
+    }
+  }
 
   // -------- Clock --------
   env.clockYear = () => new Date().getFullYear()
@@ -222,6 +295,23 @@ export function createBuiltins(ctx) {
   env.playlistSetPosition = () => {}
   env.playlistGetLength = () => 0
   env.nodeId = () => 0
+
+  // -------- Fixed-point bitwise ops (targets of the @fixedpoint transform) ----
+  // Hardware bitwise operators act on the raw 32-bit Q16.16 word; JS bitwise
+  // on float64 truncates to int32 instead. R converts float → raw word (|0
+  // reproduces hardware's wrap at ±32768), F reinterprets a raw word back as
+  // a signed Q16.16 float. Patterns never call these directly — only source
+  // rewritten by transformBitwiseOps (src/vm/fixedpoint.js) does. Shift counts
+  // stay plain numeric (JS's ToInt32 + 5-bit mask matches int shift behavior).
+  const R = (a) => Math.round(a * 65536) | 0
+  const F = (r) => (r | 0) / 65536
+  env.__pbshl = (a, b) => F(R(a) << b)
+  env.__pbshr = (a, b) => F(R(a) >> b)
+  env.__pbshru = (a, b) => F(R(a) >>> b)
+  env.__pband = (a, b) => F(R(a) & R(b))
+  env.__pbor = (a, b) => F(R(a) | R(b))
+  env.__pbxor = (a, b) => F(R(a) ^ R(b))
+  env.__pbnot = (a) => F(~R(a))
 
   // -------- Sensor-board globals (default to safe zeros) --------
   env.frequencyData = new Float64Array(32)

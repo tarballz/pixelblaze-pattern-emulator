@@ -40,7 +40,7 @@ export const BUILTIN_CATALOG = {
   perlinTurbulence: fn(4, Infinity), setPerlinWrap: fn(3),
 
   // Color / pixel output
-  hsv: fn(3), hsv24: fn(1), rgb: fn(3),
+  hsv: fn(3), hsv24: fn(3), rgb: fn(3),
   setPalette: fn(1), paint: fn(1, 2),
 
   // Arrays

@@ -1,4 +1,4 @@
-// End-to-end: load a real pattern and a real map from ~/code/pb, drive the
+// End-to-end: load a real pattern and a real map from ~/code/pb_pattern_maker, drive the
 // render loop for a few frames, and verify output is sane (non-zero, non-NaN).
 
 import { describe, it, expect } from 'vitest'
@@ -8,7 +8,9 @@ import { join } from 'node:path'
 import { parseMapContent, prepareMap, selectRenderFn } from '../src/map/index.js'
 import { createVM } from '../src/vm/index.js'
 
-const PB = join(homedir(), 'code/pb')
+// Root of the companion pattern_maker checkout. Override with PB_ROOT if yours
+// lives elsewhere; defaults to ~/code/pb_pattern_maker.
+const PB = process.env.PB_ROOT || join(homedir(), 'code/pb_pattern_maker')
 
 function runFrames(patternPath, mapPath, { frames = 3 } = {}) {
   const patternSource = readFileSync(patternPath, 'utf8')
@@ -131,6 +133,40 @@ describeIf('integration — real patterns against the egg map', () => {
     let diffs = 0
     for (let i = 0; i < f1.length; i++) if (Math.abs(f1[i] - f2[i]) > 0.01) diffs++
     expect(diffs).toBeGreaterThan(10)
+  })
+
+  it('slime_mold.js loads and runs with fixed-point mode (array methods, mapPixels, bit packing)', () => {
+    // The showpiece pattern: exercises .mutate/.sort method forms, mapPixels,
+    // and Q16.16 bit-packed neighbor indices. Historically it could not even
+    // load (no method forms on array(n) proxies) and silently corrupted under
+    // plain float64 bitwise. Mapping takes hundreds of frames at 4096 ops per
+    // cycle, so this only smoke-tests the early frames: no throw, finite RGB.
+    const patternSource = readFileSync(join(PB, 'pattern_maker/patterns/egg/slime_mold.js'), 'utf8')
+    const parsed = parseMapContent(readFileSync(eggMap, 'utf8'))
+    const map = prepareMap(parsed, { normalizeMode: 'fill' })
+    const vm = createVM({
+      source: patternSource,
+      pixelCount: map.pixelCount,
+      mapDim: map.dim,
+      mapCoords: map.normalized,
+      fixedPoint: 'on'
+    })
+    const chosen = selectRenderFn(map.dim, vm.classified)
+    const { nx, ny, nz } = map.normalized
+    const pc = map.pixelCount
+    const rgb = new Float32Array(pc * 3)
+
+    for (let f = 0; f < 10; f++) {
+      vm.beforeRender(16)
+      for (let i = 0; i < pc; i++) {
+        vm.resetPixel()
+        chosen(i, nx, ny, nz, pc)
+        vm.readPixel(rgb, i)
+      }
+    }
+    for (let i = 0; i < pc * 3; i++) {
+      expect(Number.isFinite(rgb[i])).toBe(true)
+    }
   })
 
   it('fire.js runs on the 3D egg map via 2D render fallback', () => {

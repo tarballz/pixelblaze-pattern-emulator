@@ -2,7 +2,7 @@ import { createScene } from '../render/scene.js'
 import { createPixelCloud } from '../render/pixels.js'
 import { parseMapContent, prepareMap, selectRenderFnInfo, generateMap } from '../map/index.js'
 import { createVM } from '../vm/index.js'
-import { lintPattern } from '../vm/lint.js'
+import { lintPattern, countExpensiveRenderOps } from '../vm/lint.js'
 import { PATTERN_LINE_OFFSET } from '../vm/sandbox.js'
 import { buildControlPanel, readCurrentValues } from './controls.js'
 import { createPaletteStrip } from './palette.js'
@@ -11,6 +11,7 @@ import { unwrapPatternText } from './epe.js'
 import { createWatcher } from './watcher.js'
 import { createBrowser } from './browser.js'
 import { createEditor } from './editor.js'
+import { openDevice } from './device.js'
 
 // ---------- DOM refs ----------
 const canvas = document.getElementById('stage')
@@ -24,6 +25,20 @@ const fileNameEl = document.getElementById('fileName')
 const renderIndicatorEl = document.getElementById('renderIndicator')
 const saveBtnEl = document.getElementById('saveBtn')
 const toggleEditorBtnEl = document.getElementById('toggleEditor')
+
+// Keep the loader panel just below the HUD regardless of how tall the HUD is
+// (stats lines, device row, etc. all change its height). A hardcoded CSS top
+// overlapped the two panels the moment the HUD grew a row.
+{
+  const hudEl = document.getElementById('hud')
+  const positionLoader = () => {
+    const top = hudEl.offsetTop + hudEl.offsetHeight + 8
+    loaderEl.style.top = `${top}px`
+    loaderEl.style.maxHeight = `calc(100% - ${top + 12}px)`
+  }
+  new ResizeObserver(positionLoader).observe(hudEl)
+  positionLoader()
+}
 
 // ---------- Scene (persistent across reloads) ----------
 const sceneCtx = createScene(canvas)
@@ -45,6 +60,10 @@ let state = {
     normalizeMode: 'fill',
     forceDim: undefined,
     swapYZ: false,
+    fixedPoint: 'auto',   // 'auto' (honor // @fixedpoint pragma) | 'on' | 'off'
+    outputMethod: 'ws2812', // 'ws2812' | 'expander' | 'apa102' — for the HW FPS estimate
+    simHwFps: false,        // step the pattern at the estimated hardware frame rate
+    deviceIp: '',           // last-used Pixelblaze IP for the device link
     bloom: false,
     speed: 1,
     ledSize: null,         // null = use pixels.js default
@@ -80,6 +99,9 @@ try {
 
 document.getElementById('normalizeMode').value = state.options.normalizeMode
 document.getElementById('swapYZ').checked = state.options.swapYZ
+document.getElementById('fixedPoint').value = state.options.fixedPoint ?? 'auto'
+document.getElementById('outputMethod').value = state.options.outputMethod ?? 'ws2812'
+document.getElementById('simHwFps').checked = !!state.options.simHwFps
 document.getElementById('bloomToggle').checked = state.options.bloom
 document.getElementById('speed').value = String(state.options.speed ?? 1)
 document.getElementById('speedVal').textContent = (state.options.speed ?? 1).toFixed(2) + '\u00D7'
@@ -459,6 +481,71 @@ document.getElementById('swapYZ').addEventListener('change', (e) => {
   state.preparedMap = null
   persist(); rebuildIfReady()
 })
+document.getElementById('fixedPoint').addEventListener('change', (e) => {
+  state.options.fixedPoint = e.target.value
+  // VM-only option — the prepared map is unaffected, so a pattern-only rebuild suffices.
+  persist(); rebuildIfReady({ patternOnly: true })
+})
+document.getElementById('outputMethod').addEventListener('change', (e) => {
+  state.options.outputMethod = e.target.value
+  persist(); updateFpsHud(true)
+})
+document.getElementById('simHwFps').addEventListener('change', (e) => {
+  state.options.simHwFps = e.target.checked
+  hwAccumMs = 0
+  persist(); updateFpsHud(true)
+})
+
+// ---------- Device link (push-to-Pixelblaze) ----------
+const deviceIpEl = document.getElementById('deviceIp')
+const deviceDotEl = document.getElementById('deviceDot')
+const deviceConnectBtn = document.getElementById('deviceConnect')
+const deviceUploadBtn = document.getElementById('deviceUpload')
+const deviceCopyBtn = document.getElementById('deviceCopy')
+deviceIpEl.value = state.options.deviceIp || ''
+let device = null
+
+function deviceStatusChanged(s) {
+  deviceDotEl.className = s === 'open' ? 'open' : s === 'connecting' ? 'connecting' : s === 'error' ? 'error' : ''
+  deviceUploadBtn.disabled = s !== 'open'
+  deviceConnectBtn.textContent = (s === 'open' || s === 'connecting') ? 'Disconnect' : 'Connect'
+}
+
+deviceConnectBtn.addEventListener('click', () => {
+  if (device && (device.status === 'open' || device.status === 'connecting')) {
+    device.close(); device = null
+    return
+  }
+  const ip = deviceIpEl.value.trim()
+  if (!ip) { showError(new Error('Enter the Pixelblaze IP first')); return }
+  state.options.deviceIp = ip
+  persist()
+  device = openDevice(ip, { onStatus: deviceStatusChanged })
+  // Console escape hatch for the protocol spike (see device.js header note).
+  window.__pbDevice = device
+})
+
+deviceUploadBtn.addEventListener('click', () => {
+  if (!device || device.status !== 'open') return
+  const src = editor.getDoc()
+  if (!src) { showError(new Error('Nothing to upload — editor is empty')); return }
+  const name = (state.lastPattern?.name || 'pb_emu_pattern').replace(/\.js$/i, '')
+  try {
+    device.uploadSource(name, src)
+    console.info(`Uploaded "${name}" (${src.length} bytes) via putSourceCode — verify the device picked it up (experimental path).`)
+  } catch (err) {
+    showError(err)
+  }
+})
+
+// Zero-risk interim: copy the buffer and open the device's own editor.
+deviceCopyBtn.addEventListener('click', async () => {
+  const src = editor.getDoc()
+  if (!src) { showError(new Error('Nothing to copy — editor is empty')); return }
+  try { await navigator.clipboard.writeText(src) } catch {}
+  const ip = deviceIpEl.value.trim() || state.options.deviceIp
+  if (ip) window.open(`http://${ip}/`, '_blank')
+})
 function updateBloomSlidersVisible() {
   const vis = !!state.options.bloom
   document.getElementById('bloomStrengthLbl').classList.toggle('hidden', !vis)
@@ -824,7 +911,15 @@ function rebuild({ previousValues, patternOnly = false } = {}) {
     const { pixelCount, coords } = prepared
 
     if (state.pixelCloud) state.pixelCloud.dispose()
-    state.pixelCloud = createPixelCloud(sceneCtx.scene, { coords, pixelCount })
+    state.pixelCloud = createPixelCloud(sceneCtx.scene, {
+      coords,
+      pixelCount,
+      // Pixelblaze 2D maps are Y-down (3D maps are Y-up) — always mirror the
+      // DISPLAY of 2D maps so the preview matches exactly what the hardware
+      // renders on a physically mounted matrix. Pattern coords are untouched
+      // (hardware doesn't flip them either), so this is not optional.
+      flipY: prepared.dim === 2
+    })
 
     // Auto-fit only when the map changes — pattern-only reloads keep the camera.
     if (state.needsFit) {
@@ -838,7 +933,13 @@ function rebuild({ previousValues, patternOnly = false } = {}) {
   const { pixelCount, dim } = prepared
 
   // Build VM (pattern source or map dim may have changed)
-  state.vm = createVM({ source: state.patternSource, pixelCount, mapDim: dim })
+  state.vm = createVM({
+    source: state.patternSource,
+    pixelCount,
+    mapDim: dim,
+    mapCoords: prepared.normalized,
+    fixedPoint: state.options.fixedPoint ?? 'auto'
+  })
   state.vm.ctx.speed = state.options.speed ?? 1
   const info = selectRenderFnInfo(dim, state.vm.classified)
   state.chosenRender = info.fn
@@ -852,6 +953,10 @@ function rebuild({ previousValues, patternOnly = false } = {}) {
 
   if (renderIndicatorEl) renderIndicatorEl.textContent = info.picked
   countsEl.textContent = `${pixelCount} LEDs · ${dim}D (${prepared.source ?? 'map'}) · ${info.picked}`
+  // Feed the HW-FPS estimate: count expensive per-pixel ops in the render fn
+  // the dispatch cascade actually picked (picked is e.g. "render2D (z dropped)").
+  expensiveOpCount = countExpensiveRenderOps(state.patternSource, info.picked.split(' ')[0])
+  updateFpsHud(true)
   showError(null)
 
   // A previous pattern may have errored out and forced state.running=false.
@@ -859,6 +964,64 @@ function rebuild({ previousValues, patternOnly = false } = {}) {
   state.running = true
   playPauseBtn.textContent = 'Pause'
   markDirty()
+}
+
+// ---------- FPS / hardware-estimate HUD ----------
+// Constants are official ElectroMage / forum numbers, not measurements of this
+// machine. Sources:
+//   - compute ~48k px/s avg V3 pattern eval (product page; confirmed in
+//     https://forum.electromage.com/t/what-is-the-fastest-output-fps-possible-for-3600-pixels-on-pb-non-micro/4574)
+//   - WS2812 direct: 800 kbps / 24 bits ≈ 33k px/s + ~300 µs reset latch (same thread)
+//   - Output Expander: 66k px/s total per 2 Mbps serial bus, channels clock out
+//     in parallel (https://www.bhencke.com/serial-ws2812-driver) — the per-bus
+//     ceiling doesn't rise with more channels, but it sits above the compute
+//     ceiling, so expander rigs are compute-bound rather than output-bound.
+//   - APA102 direct: SPI to 20 MHz — effectively compute-bound at any count.
+// EXPENSIVE_OP_PENALTY is a rough calibration factor (est., not measured):
+// each expensive per-pixel call site (perlin/atan2/sin/...) shaves the compute
+// budget. FPS = 1 / max(computeTime, outputTime) — the optimistic-overlap
+// model, which matches wizard's published 3600-px measurements within
+// pattern-cost variance.
+const HW_EST = {
+  COMPUTE_PX_PER_SEC: 48000,
+  EXPENSIVE_OP_PENALTY: 0.15,
+  OUTPUT: {
+    ws2812:   { rate: 33000,    resetSec: 0.0003, label: 'WS2812' },
+    expander: { rate: 66000,    resetSec: 0,      label: 'Expander' },
+    apa102:   { rate: Infinity, resetSec: 0,      label: 'APA102' }
+  },
+  MAX_DISPLAY_FPS: 120
+}
+
+const fpsEl = document.getElementById('fps')
+let expensiveOpCount = 0        // recomputed on pattern load in rebuild()
+let emuFpsEma = 0               // exponential moving average ≈ rolling 30 frames
+let patternMsEma = 0
+let lastFpsHudUpdate = 0
+let hwAccumMs = 0               // elapsed-time accumulator for Sim HW FPS mode
+
+function estimateHardwareFps() {
+  const pc = state.preparedMap?.pixelCount
+  if (!pc) return null
+  const out = HW_EST.OUTPUT[state.options.outputMethod] || HW_EST.OUTPUT.ws2812
+  const computeRate = HW_EST.COMPUTE_PX_PER_SEC / (1 + HW_EST.EXPENSIVE_OP_PENALTY * expensiveOpCount)
+  const tCompute = pc / computeRate
+  const tOutput = out.rate === Infinity ? 0 : pc / out.rate + out.resetSec
+  return Math.min(1 / Math.max(tCompute, tOutput), HW_EST.MAX_DISPLAY_FPS)
+}
+
+function updateFpsHud(force = false) {
+  const now = performance.now()
+  if (!force && now - lastFpsHudUpdate < 500) return
+  lastFpsHudUpdate = now
+  if (!fpsEl) return
+  const out = HW_EST.OUTPUT[state.options.outputMethod] || HW_EST.OUTPUT.ws2812
+  const hw = estimateHardwareFps()
+  const sim = state.options.simHwFps ? ' · SIM' : ''
+  const emu = emuFpsEma > 0 ? `${Math.round(emuFpsEma)} FPS · ${patternMsEma.toFixed(1)}ms eval` : '—'
+  fpsEl.textContent = hw
+    ? `${emu} · est HW ~${hw >= 10 ? Math.round(hw) : hw.toFixed(1)} FPS (${out.label})${sim}`
+    : emu
 }
 
 // ---------- Render loop ----------
@@ -918,7 +1081,33 @@ function frame() {
   const realDelta = wall - lastFrameWall
   lastFrameWall = wall
 
-  if (state.running) { runOnePatternFrame(realDelta); sceneDirty = true }
+  if (state.running) {
+    // Sim HW FPS: only step the pattern when the estimated hardware frame
+    // interval has elapsed, passing the hardware-sized delta to beforeRender —
+    // per-frame-budgeted patterns (opsPerCycle/drawsPerFrame) then progress at
+    // true-to-hardware speed. The display simply holds the last frame between
+    // steps. Delta-based animations are unaffected in rate, only in smoothness.
+    let stepDelta = realDelta
+    let doStep = true
+    if (state.options.simHwFps) {
+      hwAccumMs += realDelta
+      const hwFps = estimateHardwareFps()
+      const interval = hwFps ? 1000 / hwFps : 0
+      if (hwAccumMs >= interval) { stepDelta = hwAccumMs; hwAccumMs = 0 }
+      else doStep = false
+    }
+    if (doStep) {
+      const t0 = performance.now()
+      runOnePatternFrame(stepDelta)
+      const evalMs = performance.now() - t0
+      // EMA with α≈1/30 ≈ a rolling 30-frame window. In sim mode stepDelta is
+      // the hardware interval, so the FPS readout shows the simulated rate.
+      patternMsEma += (evalMs - patternMsEma) / 30
+      if (stepDelta > 0) emuFpsEma += (1000 / stepDelta - emuFpsEma) / 30
+      sceneDirty = true
+    }
+    updateFpsHud()
+  }
   if (sceneDirty) {
     paletteStrip.draw()
     sceneCtx.render()

@@ -305,3 +305,29 @@ function levenshtein(a, b) {
   }
   return dp[n]
 }
+
+// Count expensive-math call SITES inside render bodies — feeds the FPS HUD's
+// estimated-hardware-FPS model (each per-pixel expensive op eats into the
+// hardware's ~48k px/s budget). Unlike the lint warnings above (deduped per
+// callee), this counts every call site. When `renderName` is given (e.g. the
+// dispatch cascade's pick), only that function's body is counted so a pattern
+// exporting both render2D and render3D isn't double-billed.
+export function countExpensiveRenderOps(source, renderName = null) {
+  let tree
+  try { tree = parsePattern(source) } catch { return 0 }
+  const fns = topLevelFunctions(tree)
+  let count = 0
+  for (const f of fns) {
+    const name = nodeText(source, f.nameNode)
+    if (renderName ? name !== renderName : !RENDER_FUNCS.has(name)) continue
+    const body = functionBody(f.node)
+    if (!body) continue
+    walk(body.node, (n) => {
+      if (n.name === 'CallExpression') {
+        const callee = calleeName(source, n.node)
+        if (callee && EXPENSIVE_OPS.has(callee)) count++
+      }
+    })
+  }
+  return count
+}

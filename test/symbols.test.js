@@ -132,7 +132,9 @@ describe('symbols.analyze', () => {
 
   it('catalog covers every runtime builtin (drift guard)', () => {
     const ctx = { now: () => 0, prngState: 1, transformStack: [], mapDim: 1 }
-    const runtime = Object.keys(createBuiltins(ctx))
+    // `__`-prefixed names are internal transform targets (fixed-point bitwise
+    // ops), not pattern-facing builtins — patterns never reference them.
+    const runtime = Object.keys(createBuiltins(ctx)).filter(n => !n.startsWith('__'))
     const missing = runtime.filter(n => !BUILTIN_NAMES.has(n))
     expect(missing).toEqual([])
   })

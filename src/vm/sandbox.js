@@ -19,8 +19,10 @@
 // Subtract this from any runtime-error stack line to map back to the user's source.
 export const PATTERN_LINE_OFFSET = 2
 
-export function loadPattern(source, env) {
-  const body = prepareSource(source)
+import { hasFixedPointPragma, transformBitwiseOps } from './fixedpoint.js'
+
+export function loadPattern(source, env, opts = {}) {
+  const body = prepareSource(source, opts)
   const keys = Object.keys(env)
   const values = keys.map(k => env[k])
   let runner
@@ -49,7 +51,7 @@ export function evaluateMapperFunction(source, pixelCount, env = {}) {
   return runner.apply(Object.create(null), [...values, pixelCount])
 }
 
-function prepareSource(source) {
+function prepareSource(source, opts = {}) {
   // 1. Collect top-level function names (declared and exported).
   const names = new Set()
   const fnDecl = /(^|\n|;)\s*(?:export\s+)?function\s+([A-Za-z_$][\w$]*)/g
@@ -61,6 +63,14 @@ function prepareSource(source) {
   // a preceding line-comment and `export function ...`, splicing the two
   // lines together so the comment ate the next declaration.
   let stripped = source.replace(/(^|\n|;)(\s*)export(\s+)/g, '$1$2$3')
+
+  // 2b. Q16.16 bitwise mode: opts.fixedPoint true forces on, false forces off,
+  // undefined ("auto") defers to a `// @fixedpoint` pragma in the source.
+  // Applied before initBareVars; both passes are newline-free, so
+  // PATTERN_LINE_OFFSET error mapping stays valid.
+  const fixed = opts.fixedPoint === true ||
+    (opts.fixedPoint !== false && hasFixedPointPragma(source))
+  if (fixed) stripped = transformBitwiseOps(stripped)
 
   // 3. Initialize bare `var x;` / `var a, b, c;` declarations to 0.
   // PB firmware zero-initializes all fixed-point cells; JS leaves uninit vars

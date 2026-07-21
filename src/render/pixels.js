@@ -25,7 +25,13 @@ function spriteTexture() {
   return sharedSprite
 }
 
-export function createPixelCloud(scene, { coords, pixelCount }) {
+// `flipY`: mirror display positions about the map's Y midpoint. Used for 2D
+// maps under the hardware Y convention — Pixelblaze 2D maps are Y-DOWN
+// (graphics convention, confirmed intentional by the firmware author) while
+// Three.js draws +y up, so an unflipped 2D preview is vertically mirrored
+// relative to the physically mounted matrix. Display-only: pattern-visible
+// coords are untouched (hardware doesn't flip them either).
+export function createPixelCloud(scene, { coords, pixelCount, flipY = false }) {
   // Center and fit raw coords into [-1, 1]^3 so camera framing is stable
   // regardless of map units.
   let minX = Infinity, minY = Infinity, minZ = Infinity
@@ -40,10 +46,11 @@ export function createPixelCloud(scene, { coords, pixelCount }) {
   const spanMax = Math.max(maxX - minX, maxY - minY, maxZ - minZ) || 1
   const scale = 2 / spanMax
 
+  const ySign = flipY ? -1 : 1
   const positions = new Float32Array(pixelCount * 3)
   for (let i = 0; i < pixelCount; i++) {
     positions[i * 3]     = (coords[i * 3]     - cx) * scale
-    positions[i * 3 + 1] = (coords[i * 3 + 1] - cy) * scale
+    positions[i * 3 + 1] = (coords[i * 3 + 1] - cy) * scale * ySign
     positions[i * 3 + 2] = (coords[i * 3 + 2] - cz) * scale
   }
 

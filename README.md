@@ -159,7 +159,7 @@ Suites:
 - `controls.test.js` — control widget helpers
 - `watcher.test.js` — auto-reload watcher (baseline, change-detect, stop, enable/disable, error retry)
 - `editor.test.js` — CodeMirror wrapper mount/setDoc/diagnostics lifecycle
-- `integration.test.js` — real patterns (`solid_color`, `coordinate_debug`, `lava_flow`, `expanding_rings`, `fire`) against the real egg map; skipped if `~/code/pb/` isn't present
+- `integration.test.js` — real patterns (`solid_color`, `coordinate_debug`, `lava_flow`, `expanding_rings`, `fire`) against the real egg map; skipped if `~/code/pb_pattern_maker/` isn't present (override with `PB_ROOT`)
 
 ## Security note
 

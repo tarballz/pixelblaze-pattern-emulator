@@ -259,3 +259,109 @@ describe('builtins: math/waveforms/perlin', () => {
     expect(env1.prng()).toBe(env2.prng())
   })
 })
+
+describe('builtins: array methods and mapPixels', () => {
+  it('array(n) supports method-form mutate/sort/sum like hardware', () => {
+    const env = mkEnv()
+    const a = env.array(5)
+    a.mutate((v, i) => 4 - i)          // [4,3,2,1,0]
+    expect(a[0]).toBe(4)
+    a.sort()                            // in place, numeric ascending
+    expect([a[0], a[4]]).toEqual([0, 4])
+    expect(a.sum()).toBe(10)
+    expect(a.reduce((acc, v) => acc + v, 0)).toBe(10)
+  })
+
+  it('sort is numeric, not lexicographic', () => {
+    const env = mkEnv()
+    const a = env.array(3)
+    a[0] = 10; a[1] = 9; a[2] = 100
+    a.sort()
+    expect([a[0], a[1], a[2]]).toEqual([9, 10, 100])
+  })
+
+  it('arraySort sorts in place (hardware std::sort), not a copy', () => {
+    const env = mkEnv()
+    const a = env.array(3)
+    a[0] = 3; a[1] = 1; a[2] = 2
+    const ret = env.arraySort(a)
+    expect(a[0]).toBe(1)
+    expect(ret).toBe(a)
+  })
+
+  it('method form and functional form share behavior (mapTo, replaceAt)', () => {
+    const env = mkEnv()
+    const src = env.array(3)
+    src.mutate((v, i) => i + 1)         // [1,2,3]
+    const dst = env.array(3)
+    src.mapTo(dst, v => v * 2)
+    expect([dst[0], dst[1], dst[2]]).toEqual([2, 4, 6])
+    const wide = env.array(5)
+    wide.replaceAt(1, src)
+    expect([wide[0], wide[1], wide[3]]).toEqual([0, 1, 3])
+  })
+
+  it('mapPixels iterates normalized 3D coords', () => {
+    const t0 = performance.now()
+    const nx = new Float32Array([0.1, 0.2]), ny = new Float32Array([0.3, 0.4]), nz = new Float32Array([0.5, 0.6])
+    const ctx = { now: () => performance.now() - t0, prngState: 1, transformStack: [], mapDim: 3, mapCoords: { nx, ny, nz } }
+    const env = createBuiltins(ctx)
+    env.pixelCount = 2
+    const seen = []
+    env.mapPixels((i, x, y, z) => { seen.push([i, x, y, z]) })
+    expect(seen.length).toBe(2)
+    expect(seen[0][0]).toBe(0)
+    expect(seen[0][1]).toBeCloseTo(0.1, 5)
+    expect(seen[1][3]).toBeCloseTo(0.6, 5)
+  })
+
+  it('mapPixels falls back to 1D when no coords are provided', () => {
+    const env = mkEnv()   // mkEnv passes no mapCoords
+    const seen = []
+    env.mapPixels((i, x) => { seen.push([i, x]) })
+    expect(seen.length).toBe(10)
+    expect(seen[5][1]).toBeCloseTo(0.5, 5)
+  })
+})
+
+describe('builtins: setPerlinWrap', () => {
+  it('perlin tiles at the wrap period', async () => {
+    const { perlin, setPerlinWrap, resetPerlinWrap } = await import('../src/vm/perlin.js')
+    setPerlinWrap(4, 4, 4)
+    for (const [x, y, z] of [[0.3, 1.2, 2.7], [3.9, 0.1, 1.5], [1.5, 2.5, 3.5]]) {
+      expect(perlin(x + 4, y, z)).toBeCloseTo(perlin(x, y, z), 10)
+      expect(perlin(x, y + 4, z)).toBeCloseTo(perlin(x, y, z), 10)
+      expect(perlin(x, y, z + 4)).toBeCloseTo(perlin(x, y, z), 10)
+      expect(perlin(x + 8, y + 4, z + 12)).toBeCloseTo(perlin(x, y, z), 10)
+    }
+    resetPerlinWrap()
+  })
+
+  it('unwrapped output is unchanged by the wrap-aware refactor (continuity + range)', async () => {
+    const { perlin, resetPerlinWrap } = await import('../src/vm/perlin.js')
+    resetPerlinWrap()
+    // Natural period 256 still holds; adjacent samples stay continuous.
+    expect(perlin(0.5 + 256, 0.5, 0.5)).toBeCloseTo(perlin(0.5, 0.5, 0.5), 10)
+    let prev = perlin(0, 0.5, 0.5)
+    for (let x = 0.02; x < 2; x += 0.02) {
+      const v = perlin(x, 0.5, 0.5)
+      expect(Math.abs(v - prev)).toBeLessThan(0.1)
+      expect(v).toBeGreaterThanOrEqual(-0.5)
+      expect(v).toBeLessThanOrEqual(0.5)
+      prev = v
+    }
+  })
+
+  it('createVM resets wrap left behind by a previous pattern', async () => {
+    const { perlin, setPerlinWrap } = await import('../src/vm/perlin.js')
+    const { createVM } = await import('../src/vm/index.js')
+    setPerlinWrap(2, 2, 2)
+    createVM({ source: 'export function render(i) {}', pixelCount: 4, mapDim: 1 })
+    // With wrap cleared, period-2 tiling must no longer hold in general.
+    let anyDiff = false
+    for (const x of [0.3, 0.7, 1.1, 1.9]) {
+      if (Math.abs(perlin(x + 2, 0.4, 0.6) - perlin(x, 0.4, 0.6)) > 1e-9) anyDiff = true
+    }
+    expect(anyDiff).toBe(true)
+  })
+})

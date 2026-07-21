@@ -49,29 +49,55 @@ function grad(hash, x, y, z) {
   return ((h & 1) === 0 ? u : -u) + ((h & 2) === 0 ? v : -v)
 }
 
+// Per-axis lattice wrap periods (hardware default is 256, i.e. the permutation
+// table's natural period). setPerlinWrap(x, y, z) makes noise tile at integer
+// intervals by taking lattice coordinates modulo the period — standard
+// tileable Perlin. Module-level singleton, same pattern as currentPixel.js.
+const wrap = { x: 0, y: 0, z: 0 }   // 0 = no wrap (natural 256 period)
+
+function wrapLattice(v, period) {
+  if (period <= 0) return v & 255
+  const w = v % period
+  return (w < 0 ? w + period : w) & 255
+}
+
 export function perlin(x, y = 0, z = 0, seed = 0) {
   const p = makePerm(seed)
-  const X = Math.floor(x) & 255
-  const Y = Math.floor(y) & 255
-  const Z = Math.floor(z) & 255
-  x -= Math.floor(x); y -= Math.floor(y); z -= Math.floor(z)
+  const fx = Math.floor(x), fy = Math.floor(y), fz = Math.floor(z)
+  const X = wrapLattice(fx, wrap.x)
+  const X1 = wrapLattice(fx + 1, wrap.x)
+  const Y = wrapLattice(fy, wrap.y)
+  const Y1 = wrapLattice(fy + 1, wrap.y)
+  const Z = wrapLattice(fz, wrap.z)
+  const Z1 = wrapLattice(fz + 1, wrap.z)
+  x -= fx; y -= fy; z -= fz
   const u = fade(x), v = fade(y), w = fade(z)
 
+  // Hash corners with wrap-aware lattice coords on every axis. Classic Perlin
+  // folds y+1/z+1 in as `+1` on the hash (mod-256 equivalent); with wrapping
+  // active the incremented coordinate must wrap at the period instead, so each
+  // corner is hashed from its own wrapped (X|X1, Y|Y1, Z|Z1) triple.
   const A  = (p[X] + Y) & 255
+  const A1 = (p[X] + Y1) & 255
+  const B  = (p[X1] + Y) & 255
+  const B1 = (p[X1] + Y1) & 255
   const AA = (p[A] + Z) & 255
-  const AB = (p[(A + 1) & 255] + Z) & 255
-  const B  = (p[(X + 1) & 255] + Y) & 255
+  const AB = (p[A1] + Z) & 255
   const BA = (p[B] + Z) & 255
-  const BB = (p[(B + 1) & 255] + Z) & 255
+  const BB = (p[B1] + Z) & 255
+  const AA1 = (p[A] + Z1) & 255
+  const AB1 = (p[A1] + Z1) & 255
+  const BA1 = (p[B] + Z1) & 255
+  const BB1 = (p[B1] + Z1) & 255
 
-  const v1 = lerp(grad(p[AA],     x,     y,     z),
-                  grad(p[BA],     x - 1, y,     z), u)
-  const v2 = lerp(grad(p[AB],     x,     y - 1, z),
-                  grad(p[BB],     x - 1, y - 1, z), u)
-  const v3 = lerp(grad(p[(AA + 1) & 255], x,     y,     z - 1),
-                  grad(p[(BA + 1) & 255], x - 1, y,     z - 1), u)
-  const v4 = lerp(grad(p[(AB + 1) & 255], x,     y - 1, z - 1),
-                  grad(p[(BB + 1) & 255], x - 1, y - 1, z - 1), u)
+  const v1 = lerp(grad(p[AA],  x,     y,     z),
+                  grad(p[BA],  x - 1, y,     z), u)
+  const v2 = lerp(grad(p[AB],  x,     y - 1, z),
+                  grad(p[BB],  x - 1, y - 1, z), u)
+  const v3 = lerp(grad(p[AA1], x,     y,     z - 1),
+                  grad(p[BA1], x - 1, y,     z - 1), u)
+  const v4 = lerp(grad(p[AB1], x,     y - 1, z - 1),
+                  grad(p[BB1], x - 1, y - 1, z - 1), u)
 
   return 0.5 * lerp(lerp(v1, v2, v), lerp(v3, v4, v), w)
 }
@@ -113,6 +139,18 @@ export function perlinTurbulence(x, y = 0, z = 0, octaves = 4, seed = 0) {
   return norm > 0 ? sum / norm - 0.5 : 0
 }
 
-// Per-axis tiling region. Stubbed for MVP — perlin output won't actually wrap,
-// but patterns can call it without crashing.
-export function setPerlinWrap(_x, _y, _z) {}
+// Set the per-axis integer tiling period (hardware default 256). Fractional
+// values are truncated; 0/undefined restores the natural 256 period. Note the
+// fbm/ridge/turbulence octaves double their frequency each pass, so tiling is
+// exact for the base octave and an approximation of hardware for the rest.
+export function setPerlinWrap(x, y, z) {
+  wrap.x = Math.max(0, Math.trunc(x || 0))
+  wrap.y = Math.max(0, Math.trunc(y || 0))
+  wrap.z = Math.max(0, Math.trunc(z || 0))
+}
+
+// Wrap state is a module singleton (like currentPixel.js) — reset it when a
+// new VM is created so one pattern's wrap doesn't leak into the next.
+export function resetPerlinWrap() {
+  wrap.x = 0; wrap.y = 0; wrap.z = 0
+}

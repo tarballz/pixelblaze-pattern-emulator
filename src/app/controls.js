@@ -57,6 +57,10 @@ if (typeof window !== 'undefined') {
 // Returns a disposer that clears the panel.
 export function buildControlPanel(container, controls, source, previousValues = null) {
   container.replaceChildren()
+  // Kill any read-out poller from the previous panel. main.js never calls the
+  // returned disposer, so clearing here on the next build is the load-bearing
+  // cleanup path (the disposer also clears, for hosts that do call it).
+  stopReadoutPolling()
   const live = {}
   liveValues.set(container, live)
   if (!controls.length) { container.classList.add('hidden'); return () => {} }
@@ -73,6 +77,7 @@ export function buildControlPanel(container, controls, source, previousValues = 
     saveStore(store)
   }
 
+  const readouts = []
   for (const c of controls) {
     const row = document.createElement('div')
     row.className = 'ctl-row'
@@ -91,11 +96,44 @@ export function buildControlPanel(container, controls, source, previousValues = 
     })
     row.appendChild(widget)
     container.appendChild(row)
+    if (c.kind === 'showNumber' || c.kind === 'gauge') {
+      readouts.push({ c, el: widget })
+      continue // read-only widgets: no value to seed or persist
+    }
     // Seed live with whatever the widget adopted (either `initial` or its default).
     live[c.name] = initial !== undefined ? initial : defaultFor(c)
   }
 
-  return () => { container.replaceChildren(); liveValues.delete(container) }
+  if (readouts.length) startReadoutPolling(readouts)
+
+  return () => { stopReadoutPolling(); container.replaceChildren(); liveValues.delete(container) }
+}
+
+// ---- showNumber / gauge read-out polling ----
+// These controls are pattern→UI displays: a zero-arg exported getter the UI
+// polls (matching the real Pixelblaze UI's cadence of a few Hz). One shared
+// interval serves every read-out in the panel.
+const READOUT_POLL_MS = 200
+let readoutTimer = null
+
+function startReadoutPolling(readouts) {
+  readoutTimer = setInterval(() => {
+    for (const { c, el } of readouts) el.__update(safeGet(c.fn, c.name))
+  }, READOUT_POLL_MS)
+}
+
+function stopReadoutPolling() {
+  if (readoutTimer) { clearInterval(readoutTimer); readoutTimer = null }
+}
+
+function safeGet(fn, name) {
+  try { return fn() } catch (err) { console.warn(`control ${name} threw:`, err); return undefined }
+}
+
+function formatReadout(v) {
+  if (typeof v !== 'number' || !Number.isFinite(v)) return '—'
+  // Up to 4 decimals, trailing zeros trimmed (0.5 → "0.5", 3 → "3").
+  return String(parseFloat(v.toFixed(4)))
 }
 
 // Read the current {name: value} map from widgets built by buildControlPanel.
@@ -129,11 +167,37 @@ function makeWidget(c, initial, persist) {
     case 'hsvPicker':   return hsvPickerWidget(c, initial, persist)
     case 'rgbPicker':   return rgbPickerWidget(c, initial, persist)
     case 'inputNumber': return inputNumberWidget(c, initial, persist)
+    case 'showNumber':  return showNumberWidget(c)
+    case 'gauge':       return gaugeWidget(c)
     default:
       const span = document.createElement('span')
       span.textContent = `(unsupported: ${c.kind})`
       return span
   }
+}
+
+function showNumberWidget(c) {
+  const span = document.createElement('span')
+  span.className = 'ctl-readout'
+  span.__update = (v) => { span.textContent = formatReadout(v) }
+  span.__update(safeGet(c.fn, c.name))
+  return span
+}
+
+function gaugeWidget(c) {
+  const wrap = document.createElement('div'); wrap.className = 'ctl-gauge'
+  const bar = document.createElement('div'); bar.className = 'ctl-gauge-bar'
+  const fill = document.createElement('div'); fill.className = 'ctl-gauge-fill'
+  const out = document.createElement('span'); out.className = 'ctl-val'
+  bar.appendChild(fill)
+  wrap.appendChild(bar); wrap.appendChild(out)
+  wrap.__update = (v) => {
+    const num = typeof v === 'number' && Number.isFinite(v) ? v : 0
+    fill.style.width = `${Math.max(0, Math.min(1, num)) * 100}%`
+    out.textContent = formatReadout(v)
+  }
+  wrap.__update(safeGet(c.fn, c.name))
+  return wrap
 }
 
 function sliderWidget(c, initial, persist) {

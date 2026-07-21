@@ -21,6 +21,7 @@
     <div id="hud">
       <div id="stats">
         <span id="counts">0 LEDs · —</span>
+        <span id="fps" title="Emulator FPS · pattern eval time · estimated FPS on real Pixelblaze V3 hardware for the selected output method">—</span>
       </div>
       <div id="hud-actions">
         <button id="playpause" type="button" title="Space">Pause</button>
@@ -34,6 +35,13 @@
       <select id="recents" title="Recent patterns">
         <option value="">Recents…</option>
       </select>
+      <div id="deviceCtl">
+        <span id="deviceDot" title="Device connection status"></span>
+        <input type="text" id="deviceIp" placeholder="pixelblaze IP" spellcheck="false" />
+        <button id="deviceConnect" type="button" title="Connect to the Pixelblaze's websocket (ws://ip:81)">Connect</button>
+        <button id="deviceUpload" type="button" disabled title="Push the editor buffer to the device (experimental — see console)">Upload</button>
+        <button id="deviceCopy" type="button" title="Copy pattern to clipboard and open the device's web editor for pasting">Copy→PB</button>
+      </div>
       <label id="speedCtl" title="Simulation speed">
         <span>Speed</span>
         <input type="range" id="speed" min="0.1" max="4" step="0.05" value="1" />
@@ -122,6 +130,21 @@
         </select>
       </label>
       <label><span>Swap Y/Z</span><input type="checkbox" id="swapYZ" /></label>
+      <label><span>Output HW</span>
+        <select id="outputMethod" title="LED output method on the real device — sets the output-side ceiling for the estimated hardware FPS. The Output Expander lifts WS2812's 33k px/s wall to 66k px/s (parallel channel clock-out), making large rigs compute-bound instead.">
+          <option value="ws2812" selected>WS2812 direct</option>
+          <option value="expander">Output Expander</option>
+          <option value="apa102">APA102 direct</option>
+        </select>
+      </label>
+      <label title="Step the pattern at the estimated hardware frame rate instead of the browser's. Makes per-frame-budgeted patterns (e.g. slime_mold's opsPerCycle/drawsPerFrame) progress at true-to-hardware speed. Delta-based animations look the same either way, just less smooth."><span>Sim HW FPS</span><input type="checkbox" id="simHwFps" /></label>
+      <label><span>16.16 bit ops</span>
+        <select id="fixedPoint" title="Q16.16 raw-word bitwise semantics (hardware-accurate bit packing). Auto honors a // @fixedpoint pragma in the pattern.">
+          <option value="auto" selected>Auto (pragma)</option>
+          <option value="on">On</option>
+          <option value="off">Off</option>
+        </select>
+      </label>
       <label><span>Bloom</span><input type="checkbox" id="bloomToggle" /></label>
       <label><span>LED size</span>
         <input type="range" id="ledSize" min="0.005" max="0.12" step="0.001" value="0.03" />

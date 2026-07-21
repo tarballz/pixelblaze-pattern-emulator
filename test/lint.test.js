@@ -128,3 +128,30 @@ describe('lintPattern', () => {
     expect(f.endCol).toBe(16)
   })
 })
+
+describe('countExpensiveRenderOps', () => {
+  it('counts expensive call sites in render bodies, not deduped', async () => {
+    const { countExpensiveRenderOps } = await import('../src/vm/lint.js')
+    const src = `
+      export function beforeRender(d) { t = time(0.1) }
+      export function render2D(i, x, y) { hsv(sin(x) + sin(y) + atan2(y, x), 1, 1) }
+    `
+    expect(countExpensiveRenderOps(src)).toBe(3)
+  })
+
+  it('scopes to a single render fn when named (no double-billing 2D+3D exports)', async () => {
+    const { countExpensiveRenderOps } = await import('../src/vm/lint.js')
+    const src = `
+      export function render2D(i, x, y) { hsv(sin(x), 1, 1) }
+      export function render3D(i, x, y, z) { hsv(perlin(x, y, z, 0), 1, 1) }
+    `
+    expect(countExpensiveRenderOps(src)).toBe(2)
+    expect(countExpensiveRenderOps(src, 'render3D')).toBe(1)
+    expect(countExpensiveRenderOps(src, 'render2D')).toBe(1)
+  })
+
+  it('returns 0 for cheap patterns', async () => {
+    const { countExpensiveRenderOps } = await import('../src/vm/lint.js')
+    expect(countExpensiveRenderOps('export function render(i) { hsv(i, 1, 1) }')).toBe(0)
+  })
+})

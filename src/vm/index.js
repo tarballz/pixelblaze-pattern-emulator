@@ -3,8 +3,10 @@
 import { createBuiltins } from './builtins.js'
 import { loadPattern, classifyExports, applyControlDefaults } from './sandbox.js'
 import { resetPixel, readPixel } from './currentPixel.js'
+import { resetPerlinWrap } from './perlin.js'
 
-export function createVM({ source, pixelCount, mapDim }) {
+// fixedPoint: 'auto' (default — honor a `// @fixedpoint` pragma) | 'on' | 'off'.
+export function createVM({ source, pixelCount, mapDim, mapCoords = null, fixedPoint = 'auto' }) {
   // Sim clock: time() inside a pattern reads ctx.now(), which returns a value
   // we control. advance() adds `deltaMs * speed` so a speed slider slows/
   // fast-forwards the pattern, and a paused host can step exactly one frame
@@ -20,13 +22,20 @@ export function createVM({ source, pixelCount, mapDim }) {
     },
     prngState: 1,
     transformStack: [identity()],
-    mapDim
+    mapDim,
+    // Normalized coord arrays ({nx, ny, nz} Float32Arrays) for mapPixels();
+    // optional — headless/test callers may omit it (1D fallback applies).
+    mapCoords
   }
 
+  resetPerlinWrap() // module singleton — don't inherit the previous pattern's wrap
   const env = createBuiltins(ctx)
   env.pixelCount = pixelCount
 
-  const rawExports = loadPattern(source, env)
+  const fp = fixedPoint === 'on' || fixedPoint === true ? true
+    : fixedPoint === 'off' || fixedPoint === false ? false
+    : undefined // auto — pragma decides
+  const rawExports = loadPattern(source, env, { fixedPoint: fp })
   const classified = classifyExports(rawExports)
   applyControlDefaults(classified.controls)
 
