@@ -28,14 +28,25 @@ export const HW_EST = {
   MAX_DISPLAY_FPS: 120
 }
 
-// Returns estimated frames/sec on a Pixelblaze V3, or null without a pixel
-// count. `bound` is derivable by the caller: compute-bound when
-// computeTime >= outputTime.
-export function estimateHardwareFps({ pixelCount, outputMethod, expensiveOpCount = 0 }) {
-  if (!pixelCount) return null
+// Returns the full estimate — fps plus the compute/output times and which one
+// is the bottleneck — on a Pixelblaze V3. `fps`/`bound` are both null without
+// a pixel count. Callers that only need the number (the HUD) should use
+// estimateHardwareFps below; callers that need to report *why* (the headless
+// perf CLI) should call this directly rather than re-deriving tCompute/tOutput.
+export function estimateHardware({ pixelCount, outputMethod, expensiveOpCount = 0 }) {
+  if (!pixelCount) return { fps: null, bound: null, tCompute: 0, tOutput: 0 }
   const out = HW_EST.OUTPUT[outputMethod] || HW_EST.OUTPUT.ws2812
   const computeRate = HW_EST.COMPUTE_PX_PER_SEC / (1 + HW_EST.EXPENSIVE_OP_PENALTY * expensiveOpCount)
   const tCompute = pixelCount / computeRate
   const tOutput = out.rate === Infinity ? 0 : pixelCount / out.rate + out.resetSec
-  return Math.min(1 / Math.max(tCompute, tOutput), HW_EST.MAX_DISPLAY_FPS)
+  const fps = Math.min(1 / Math.max(tCompute, tOutput), HW_EST.MAX_DISPLAY_FPS)
+  const bound = tCompute >= tOutput ? 'compute' : 'output'
+  return { fps, bound, tCompute, tOutput }
+}
+
+// Returns estimated frames/sec on a Pixelblaze V3, or null without a pixel
+// count. Thin wrapper over estimateHardware for callers (the HUD) that only
+// need the number.
+export function estimateHardwareFps(params) {
+  return estimateHardware(params).fps
 }
