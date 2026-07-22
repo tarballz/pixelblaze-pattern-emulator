@@ -379,11 +379,6 @@ document.querySelectorAll('.tabs').forEach(tabs => {
       persist()
     })
   })
-  // Restore the saved tab through the same code path so panels stay in sync.
-  try {
-    const saved = state.ui[`${group}Tab`]
-    if (saved) tabs.querySelector(`button[data-tab="${saved}"]`)?.click()
-  } catch {}
 })
 
 // ---------- UI: loader visibility ----------
@@ -1177,6 +1172,17 @@ requestAnimationFrame(frame)
 // rebuild() run synchronously for 'paste'/'generated' descriptors and touch
 // module-scope `let`s declared further down the file (e.g. expensiveOpCount);
 // running this any earlier risks a TDZ ReferenceError for those kinds.
+// Restore saved loader tabs through the real click path (must also run after all
+// top-level declarations — the click handler's persist() touches later let
+// bindings (persistTimer), so firing this synthetically during the tabs.forEach
+// wiring above throws a TDZ ReferenceError that the DOM swallows into a console
+// error rather than this try/catch).
+try {
+  document.querySelectorAll('.tabs').forEach(tabs => {
+    const saved = state.ui[`${tabs.dataset.group}Tab`]
+    if (saved) tabs.querySelector(`button[data-tab="${saved}"]`)?.click()
+  })
+} catch {}
 // Map first: rebuildIfReady needs the map to build the VM; order isn't
 // strictly required — rebuildIfReady guards on both — but map-first avoids
 // a wasted no-op rebuild.
