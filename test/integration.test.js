@@ -1,4 +1,4 @@
-// End-to-end: load a real pattern and a real map from ~/code/pb_pattern_maker, drive the
+// End-to-end: load a real pattern and a real map from ~/code/pb/pb_pattern_maker, drive the
 // render loop for a few frames, and verify output is sane (non-zero, non-NaN).
 
 import { describe, it, expect } from 'vitest'
@@ -9,8 +9,8 @@ import { parseMapContent, prepareMap, selectRenderFn } from '../src/map/index.js
 import { createVM } from '../src/vm/index.js'
 
 // Root of the companion pattern_maker checkout. Override with PB_ROOT if yours
-// lives elsewhere; defaults to ~/code/pb_pattern_maker.
-const PB = process.env.PB_ROOT || join(homedir(), 'code/pb_pattern_maker')
+// lives elsewhere; defaults to ~/code/pb/pb_pattern_maker.
+const PB = process.env.PB_ROOT || join(homedir(), 'code/pb/pb_pattern_maker')
 
 function runFrames(patternPath, mapPath, { frames = 3 } = {}) {
   const patternSource = readFileSync(patternPath, 'utf8')

@@ -35,7 +35,7 @@ The `integration.test.js` `runFrames` helper is the canonical example of wiring 
 
 ### Sample assets and the Path loader
 
-`public/samples/` ships `rainbow.js` and `ring.csv` so a fresh clone has something to load without pulling external resources. Vite serves `public/` at the root, so the Path loader tab reaches them at `/samples/...`. Integration tests read `~/code/pb_pattern_maker/pattern_maker/maps/egg_mapping/led_map_3d.csv` directly via `readFileSync` and skip themselves if it's missing — don't expect them to run on a fresh clone. Point `PB_ROOT` at a different checkout to override the location.
+`public/samples/` ships `rainbow.js` and `ring.csv` so a fresh clone has something to load without pulling external resources. Vite serves `public/` at the root, so the Path loader tab reaches them at `/samples/...`. Integration tests read `~/code/pb/pb_pattern_maker/pattern_maker/maps/egg_mapping/led_map_3d.csv` directly via `readFileSync` and skip themselves if it's missing — don't expect them to run on a fresh clone. Point `PB_ROOT` at a different checkout to override the location.
 
 ## Conventions specific to this repo
 
