@@ -3,6 +3,7 @@ import { createPixelCloud } from '../render/pixels.js'
 import { parseMapContent, prepareMap, selectRenderFnInfo, generateMap } from '../map/index.js'
 import { createVM } from '../vm/index.js'
 import { lintPattern, countExpensiveRenderOps } from '../vm/lint.js'
+import { HW_EST, estimateHardwareFps as estimateHwFpsPure } from '../vm/hwmodel.js'
 import { initCompilerCheck, checkCompile } from '../vm/compilecheck.js'
 import { PATTERN_LINE_OFFSET } from '../vm/sandbox.js'
 import { buildControlPanel, readCurrentValues } from './controls.js'
@@ -1017,32 +1018,6 @@ function rebuild({ previousValues, patternOnly = false } = {}) {
 }
 
 // ---------- FPS / hardware-estimate HUD ----------
-// Constants are official ElectroMage / forum numbers, not measurements of this
-// machine. Sources:
-//   - compute ~48k px/s avg V3 pattern eval (product page; confirmed in
-//     https://forum.electromage.com/t/what-is-the-fastest-output-fps-possible-for-3600-pixels-on-pb-non-micro/4574)
-//   - WS2812 direct: 800 kbps / 24 bits ≈ 33k px/s + ~300 µs reset latch (same thread)
-//   - Output Expander: 66k px/s total per 2 Mbps serial bus, channels clock out
-//     in parallel (https://www.bhencke.com/serial-ws2812-driver) — the per-bus
-//     ceiling doesn't rise with more channels, but it sits above the compute
-//     ceiling, so expander rigs are compute-bound rather than output-bound.
-//   - APA102 direct: SPI to 20 MHz — effectively compute-bound at any count.
-// EXPENSIVE_OP_PENALTY is a rough calibration factor (est., not measured):
-// each expensive per-pixel call site (perlin/atan2/sin/...) shaves the compute
-// budget. FPS = 1 / max(computeTime, outputTime) — the optimistic-overlap
-// model, which matches wizard's published 3600-px measurements within
-// pattern-cost variance.
-const HW_EST = {
-  COMPUTE_PX_PER_SEC: 48000,
-  EXPENSIVE_OP_PENALTY: 0.15,
-  OUTPUT: {
-    ws2812:   { rate: 33000,    resetSec: 0.0003, label: 'WS2812' },
-    expander: { rate: 66000,    resetSec: 0,      label: 'Expander' },
-    apa102:   { rate: Infinity, resetSec: 0,      label: 'APA102' }
-  },
-  MAX_DISPLAY_FPS: 120
-}
-
 const fpsEl = document.getElementById('fps')
 let expensiveOpCount = 0        // recomputed on pattern load in rebuild()
 let emuFpsEma = 0               // exponential moving average ≈ rolling 30 frames
@@ -1051,13 +1026,11 @@ let lastFpsHudUpdate = 0
 let hwAccumMs = 0               // elapsed-time accumulator for Sim HW FPS mode
 
 function estimateHardwareFps() {
-  const pc = state.preparedMap?.pixelCount
-  if (!pc) return null
-  const out = HW_EST.OUTPUT[state.options.outputMethod] || HW_EST.OUTPUT.ws2812
-  const computeRate = HW_EST.COMPUTE_PX_PER_SEC / (1 + HW_EST.EXPENSIVE_OP_PENALTY * expensiveOpCount)
-  const tCompute = pc / computeRate
-  const tOutput = out.rate === Infinity ? 0 : pc / out.rate + out.resetSec
-  return Math.min(1 / Math.max(tCompute, tOutput), HW_EST.MAX_DISPLAY_FPS)
+  return estimateHwFpsPure({
+    pixelCount: state.preparedMap?.pixelCount,
+    outputMethod: state.options.outputMethod,
+    expensiveOpCount
+  })
 }
 
 function updateFpsHud(force = false) {
