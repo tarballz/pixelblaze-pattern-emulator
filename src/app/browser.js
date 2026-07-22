@@ -8,7 +8,7 @@
 const LIST_URL = '/__pb_emu__/list'
 const FILE_URL = '/__pb_emu__/external'
 
-export function createBrowser({ container, kind, onPick, filter, emptyMessage = 'Empty' }) {
+export function createBrowser({ container, kind, onPick, filter, emptyMessage = 'Empty', initial, onNavigate }) {
   container.classList.add('pbb')
   const rootSel = document.createElement('select')
   rootSel.className = 'pbb-root'
@@ -48,6 +48,7 @@ export function createBrowser({ container, kind, onPick, filter, emptyMessage = 
     try {
       const data = await listDir(root, path)
       render(data)
+      if (onNavigate) onNavigate({ root, path })
     } catch (err) {
       list.replaceChildren(msgRow(String(err.message || err), 'err'))
     }
@@ -140,9 +141,14 @@ export function createBrowser({ container, kind, onPick, filter, emptyMessage = 
       rootSel.disabled = roots.length <= 1
       rootSel.addEventListener('change', () => navigate(rootSel.value, ''))
       if (roots.length) {
-        const chosen = roots.includes('external') ? 'external' : roots[0]
+        let chosen = roots.includes('external') ? 'external' : roots[0]
+        let startPath = ''
+        if (initial && roots.includes(initial.root)) {
+          chosen = initial.root
+          startPath = initial.path || ''
+        }
         rootSel.value = chosen
-        navigate(chosen, '')
+        navigate(chosen, startPath)
       } else {
         list.replaceChildren(msgRow('No roots available.', 'err'))
       }
