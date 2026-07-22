@@ -98,10 +98,12 @@ const RECENTS_MAX = 8
 // Restore last-used options / inputs from localStorage
 try {
   const saved = JSON.parse(localStorage.getItem('pb_emu.v1') || '{}')
-  // NB: patternSource / lastPattern / lastMap are intentionally NOT restored —
-  // the editor starts blank on every load, and those descriptors only make
-  // sense alongside their actual content (which isn't serialized). Restoring
-  // them independently leaves the UI pointing at a pattern that isn't loaded.
+  // Restore last pattern/map for re-fetchable kinds ('path'/'url' re-fetch,
+  // 'paste'/'generated' carry their content in the descriptor). 'file' kinds
+  // can't be re-read after reload and stay unrestored.
+  const restorable = (d, kinds) => d && kinds.includes(d.kind) ? d : null
+  state.lastPattern = restorable(saved.lastPattern, ['path', 'url', 'paste'])
+  state.lastMap = restorable(saved.lastMap, ['path', 'url', 'paste', 'generated'])
   if (saved.mapText) document.getElementById('mapPaste').value = saved.mapText
   if (saved.options) Object.assign(state.options, saved.options)
   if (saved.ui) Object.assign(state.ui, saved.ui)
@@ -844,7 +846,7 @@ function compileResultToFinding({ status, version }) {
   return finding
 }
 
-async function reloadPattern() {
+async function reloadPattern({ silent = false } = {}) {
   const d = state.lastPattern
   if (!d) return
   try {
@@ -856,10 +858,10 @@ async function reloadPattern() {
       // 'file' — can't re-read; just re-apply the last source we have.
       if (state.patternSource) loadPattern(state.patternSource, d)
     }
-  } catch (err) { showError(err) }
+  } catch (err) { if (!silent) showError(err) }
 }
 
-async function reloadMap() {
+async function reloadMap({ silent = false } = {}) {
   const d = state.lastMap
   if (!d) return
   try {
@@ -870,7 +872,7 @@ async function reloadMap() {
     } else if (d.kind === 'generated') {
       loadGeneratedMap(JSON.parse(d.value))
     }
-  } catch (err) { showError(err) }
+  } catch (err) { if (!silent) showError(err) }
 }
 
 function updateReloadButton() {
@@ -1169,5 +1171,14 @@ function frame() {
 }
 requestAnimationFrame(frame)
 
-// Try to auto-rebuild if both were restored from localStorage.
-// (Not really — mapParsed isn't serialized. Pattern alone will wait for map.)
+// ---------- Session restore ----------
+// Kicked off last, after every top-level declaration/wiring in this module has
+// executed: reloadPattern/reloadMap → loadPattern/loadMap → rebuildIfReady →
+// rebuild() run synchronously for 'paste'/'generated' descriptors and touch
+// module-scope `let`s declared further down the file (e.g. expensiveOpCount);
+// running this any earlier risks a TDZ ReferenceError for those kinds.
+// Map first: rebuildIfReady needs the map to build the VM; order isn't
+// strictly required — rebuildIfReady guards on both — but map-first avoids
+// a wasted no-op rebuild.
+if (state.lastMap) reloadMap({ silent: true })
+if (state.lastPattern) reloadPattern({ silent: true })
