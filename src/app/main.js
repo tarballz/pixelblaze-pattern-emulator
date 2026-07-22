@@ -3,6 +3,7 @@ import { createPixelCloud } from '../render/pixels.js'
 import { parseMapContent, prepareMap, selectRenderFnInfo, generateMap } from '../map/index.js'
 import { createVM } from '../vm/index.js'
 import { lintPattern, countExpensiveRenderOps } from '../vm/lint.js'
+import { initCompilerCheck, checkCompile } from '../vm/compilecheck.js'
 import { PATTERN_LINE_OFFSET } from '../vm/sandbox.js'
 import { buildControlPanel, readCurrentValues } from './controls.js'
 import { createPaletteStrip } from './palette.js'
@@ -79,7 +80,11 @@ let state = {
   pixelCloud: null,
   chosenRender: null,
   rgb: null,              // Float32Array pixelCount*3
+  patternVersion: 0,      // bumped on every loadPattern call; guards the async
+                           // real-compiler check against stale results
 }
+
+initCompilerCheck()
 
 const RECENTS_KEY = 'pb_emu.recents.v1'
 const RECENTS_MAX = 8
@@ -786,9 +791,38 @@ function loadPattern(text, descriptor, { previousValues, fromEditor = false } = 
   }
   updateFileNameLabel()
   updateReloadButton()
-  showLintFindings(lintPattern(source))
+  const lintFindings = lintPattern(source)
+  showLintFindings(lintFindings)
   persist()
   rebuildIfReady({ previousValues, patternOnly: true })
+
+  // Real-compiler check (only available once something has cached a
+  // compiler locally, see compilecheck.js) — runs alongside the lint above
+  // rather than blocking it; a compile failure never blocks rendering.
+  // `patternVersion` guards against a stale check clobbering a newer one
+  // if the user keeps typing before this resolves.
+  const version = ++state.patternVersion
+  checkCompile(source).then((result) => {
+    if (!result.available || state.patternVersion !== version) return
+    showLintFindings([...lintFindings, compileResultToFinding(result)])
+  })
+}
+
+// Real compiler line/col (format: "<desc> at line N column M") refers
+// directly to the source we sent it — unlike sandbox.js's runtime errors,
+// no PATTERN_LINE_OFFSET adjustment is needed here.
+function compileResultToFinding({ status, version }) {
+  if (status === 'OK') {
+    return { severity: 'warn', message: `Compiles OK on fw ${version}` }
+  }
+  const finding = { severity: 'error', message: `Hardware compile failed: ${status}` }
+  const match = /at line (\d+) column (\d+)/.exec(status)
+  if (match) {
+    const line = Number(match[1])
+    const col = Number(match[2])
+    Object.assign(finding, { line, col, endLine: line, endCol: col + 1 })
+  }
+  return finding
 }
 
 async function reloadPattern() {

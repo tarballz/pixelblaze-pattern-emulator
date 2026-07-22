@@ -1,12 +1,23 @@
 import { defineConfig, loadEnv } from 'vite'
 import fs from 'node:fs/promises'
+import os from 'node:os'
 import path from 'node:path'
 
 const LIST_ROUTE = '/__pb_emu__/list'
 const FILE_ROUTE = '/__pb_emu__/external'
 const WRITE_ROUTE = '/__pb_emu__/write'
+const COMPILER_ROUTE = '/__pb_emu__/compiler'
 
-function pbEmuBrowser({ patternsDir, mapsDir }) {
+// Mirrors pixelblaze-client's _get_compiler_cache_dir() (pixelblaze/pixelblaze.py)
+// exactly, so this reads whatever `pb compile`/`pb fetch-compiler` already
+// cached there — never written to from here. Lives outside any git repo.
+function compilerCacheDir() {
+  return process.platform === 'win32'
+    ? path.join(os.homedir(), 'AppData', 'Local', 'pixelblaze', 'compiler_cache')
+    : path.join(os.homedir(), '.config', 'pixelblaze', 'compiler_cache')
+}
+
+function pbEmuBrowser({ patternsDir, mapsDir, compilerVersion }) {
   return {
     name: 'pb-emu-browser',
     configureServer(server) {
@@ -123,6 +134,34 @@ function pbEmuBrowser({ patternsDir, mapsDir }) {
           error(res, 404, String(err?.message || err))
         }
       })
+
+      // Serves whichever real PixelBlaze compiler pixelblaze-client has
+      // already cached locally (via `pb compile`/`pb fetch-compiler` against
+      // real hardware) so the browser can run actual hardware compile checks
+      // alongside the emulator's lint approximation. Read-only; 404s cleanly
+      // when nothing has ever been cached, which the client treats as "the
+      // feature isn't available" rather than an error.
+      server.middlewares.use(COMPILER_ROUTE, async (req, res) => {
+        try {
+          const dir = compilerCacheDir()
+          let entries
+          try {
+            entries = await fs.readdir(dir)
+          } catch {
+            return error(res, 404, 'no cached compiler found')
+          }
+          const versions = entries.filter(f => f.endsWith('.js')).map(f => f.slice(0, -3))
+          if (!versions.length) return error(res, 404, 'no cached compiler found')
+          let version = compilerVersion && versions.includes(compilerVersion) ? compilerVersion : null
+          if (!version) {
+            version = versions.slice().sort((a, b) => parseFloat(a) - parseFloat(b)).pop()
+          }
+          const source = await fs.readFile(path.join(dir, `${version}.js`), 'utf8')
+          json(res, { version, source })
+        } catch (err) {
+          error(res, 500, String(err?.message || err))
+        }
+      })
     }
   }
 }
@@ -158,7 +197,8 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [pbEmuBrowser({
       patternsDir: env.PB_EMU_EXTERNAL_PATTERNS || '',
-      mapsDir:     env.PB_EMU_EXTERNAL_MAPS || ''
+      mapsDir:     env.PB_EMU_EXTERNAL_MAPS || '',
+      compilerVersion: env.PB_EMU_COMPILER_VERSION || ''
     })],
     test: {
       environment: 'node',
