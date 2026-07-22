@@ -82,6 +82,12 @@ let state = {
   rgb: null,              // Float32Array pixelCount*3
   patternVersion: 0,      // bumped on every loadPattern call; guards the async
                            // real-compiler check against stale results
+  ui: {
+    patternTab: null,        // 'file' | 'paste' | 'url' | 'path' — null = leave HTML default
+    mapTab: null,            // + 'gen'
+    patternBrowser: null,    // { root, path } | null
+    mapBrowser: null,
+  },
 }
 
 initCompilerCheck()
@@ -98,6 +104,7 @@ try {
   // them independently leaves the UI pointing at a pattern that isn't loaded.
   if (saved.mapText) document.getElementById('mapPaste').value = saved.mapText
   if (saved.options) Object.assign(state.options, saved.options)
+  if (saved.ui) Object.assign(state.ui, saved.ui)
   // editorVisible intentionally not restored — every load starts with the
   // editor hidden; the user opts in per session via the Edit button / `E`.
 } catch {}
@@ -366,8 +373,15 @@ document.querySelectorAll('.tabs').forEach(tabs => {
       document.querySelectorAll(`[data-panel^="${group}-"]`).forEach(panel => {
         panel.classList.toggle('hidden', panel.dataset.panel !== `${group}-${btn.dataset.tab}`)
       })
+      state.ui[`${group}Tab`] = btn.dataset.tab
+      persist()
     })
   })
+  // Restore the saved tab through the same code path so panels stay in sync.
+  try {
+    const saved = state.ui[`${group}Tab`]
+    if (saved) tabs.querySelector(`button[data-tab="${saved}"]`)?.click()
+  } catch {}
 })
 
 // ---------- UI: loader visibility ----------
@@ -419,7 +433,9 @@ createBrowser({
   onPick: async (url, { name, root, relPath }) => {
     try { loadPattern(await fetchText(url), { kind: 'path', value: url, name, root, relPath }) }
     catch (err) { showError(err) }
-  }
+  },
+  initial: state.ui.patternBrowser || undefined,
+  onNavigate: (loc) => { state.ui.patternBrowser = loc; persist() },
 })
 
 // Map inputs
@@ -445,7 +461,9 @@ createBrowser({
   onPick: async (url, { name, root, relPath }) => {
     try { loadMap(await fetchText(url), { kind: 'path', value: url, name, root, relPath }) }
     catch (err) { showError(err) }
-  }
+  },
+  initial: state.ui.mapBrowser || undefined,
+  onNavigate: (loc) => { state.ui.mapBrowser = loc; persist() },
 })
 
 // Map generator
@@ -745,7 +763,8 @@ function flushPersist() {
       mapText: document.getElementById('mapPaste').value,
       lastPattern: state.lastPattern,
       lastMap: state.lastMap,
-      options: state.options
+      options: state.options,
+      ui: state.ui,
     }))
   } catch {}
 }
