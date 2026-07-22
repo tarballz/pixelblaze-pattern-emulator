@@ -7,12 +7,10 @@
 // creates a normal worker-global property instead of colliding with
 // anything. This file itself contains no proprietary code — it's just
 // plumbing that evaluates whatever compiler text the dev server hands it.
-//
-// Trust note: `compilerSrc` only ever comes from the dev server's own
-// filesystem read of the local OS-level compiler cache (see
-// vite.config.js's COMPILER_ROUTE) — never from the network or user input.
-// `sandbox.js` already does the same `new Function()` construction for
-// arbitrary pattern source, which is far less trusted than this.
+// The `const compilePattern = ...` capture logic lives in compilerLoad.js
+// (pure, unit-tested there) since it doesn't need Worker/`self` at all.
+
+import { loadCompiler } from './compilerLoad.js'
 
 let compilePatternFn = null
 
@@ -21,10 +19,7 @@ self.onmessage = (event) => {
 
   if (compilerSrc !== undefined) {
     try {
-      // eslint-disable-next-line no-new-func -- intentional: loading an
-      // externally-fetched, opaque compiler blob into an isolated scope.
-      new Function(compilerSrc)()
-      compilePatternFn = typeof compilePattern === 'function' ? compilePattern : null
+      compilePatternFn = loadCompiler(compilerSrc)
       self.postMessage({ id, ready: !!compilePatternFn })
     } catch (err) {
       self.postMessage({ id, ready: false, error: String(err?.message || err) })

@@ -13,24 +13,36 @@ async function ensureWorker() {
   if (readyPromise) return readyPromise
   readyPromise = (async () => {
     const res = await fetch('/__pb_emu__/compiler')
-    if (!res.ok) return false
+    if (!res.ok) return false // expected/common: nothing cached yet, stay silent
     const { version: v, source } = await res.json()
     version = v
     worker = new Worker(new URL('./compilerWorker.js', import.meta.url), { type: 'module' })
-    worker.onmessage = (event) => {
-      const { id, ...rest } = event.data
-      const resolve = pending.get(id)
-      if (!resolve) return
-      pending.delete(id)
-      resolve(rest)
-    }
+    // A Worker failing to even load its script (bad MIME type, module
+    // resolution error, syntax error) fires `error`, not a catchable
+    // exception here — without this handler the init promise below would
+    // hang forever with nothing in the console.
     const initId = nextId++
-    const initResult = await new Promise((resolve) => {
+    const initResult = await new Promise((resolve, reject) => {
       pending.set(initId, resolve)
+      worker.onerror = (event) => {
+        pending.delete(initId)
+        reject(new Error(`compiler worker failed to load: ${event.message || event}`))
+      }
+      worker.onmessage = (event) => {
+        const { id, ...rest } = event.data
+        const resolve = pending.get(id)
+        if (!resolve) return
+        pending.delete(id)
+        resolve(rest)
+      }
       worker.postMessage({ id: initId, compilerSrc: source })
     })
+    if (initResult.error) throw new Error(`compiler failed to initialize: ${initResult.error}`)
     return !!initResult.ready
-  })().catch(() => false)
+  })().catch((err) => {
+    console.warn('[pb_emu] real-compiler check unavailable:', err)
+    return false
+  })
   return readyPromise
 }
 

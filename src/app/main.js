@@ -805,7 +805,7 @@ function loadPattern(text, descriptor, { previousValues, fromEditor = false } = 
   checkCompile(source).then((result) => {
     if (!result.available || state.patternVersion !== version) return
     showLintFindings([...lintFindings, compileResultToFinding(result)])
-  })
+  }).catch((err) => console.error('[pb_emu] checkCompile threw unexpectedly:', err))
 }
 
 // Real compiler line/col (format: "<desc> at line N column M") refers
